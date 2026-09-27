@@ -188,6 +188,11 @@ function formatUserRecord(row) {
 
 function formatCourseRecord(row) {
   if (!row) return null;
+  const isImported = Boolean(
+    row.id?.startsWith('imported_') || 
+    row.id?.startsWith('zip_') || 
+    row.id?.includes('imported')
+  );
   return {
     id: row.id,
     ownerUsername: row.owner_username || null,
@@ -200,6 +205,7 @@ function formatCourseRecord(row) {
     totalDuration: row.total_duration,
     xpReward: Number(row.xp_reward || 100),
     modules: JSON.parse(row.modules || '[]'),
+    isImported,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
@@ -315,6 +321,47 @@ export async function clearAllCourses() {
   const sql = getDb();
   await sql`DELETE FROM courses`;
   return true;
+}
+
+export async function deleteImportedData(username = null) {
+  const sql = getDb();
+  const cleanUsername = username?.toLowerCase() || null;
+
+  // 1. Delete all courses where ID matches imported pattern (or is marked imported)
+  const deletedCourses = cleanUsername
+    ? await sql`
+        DELETE FROM courses 
+        WHERE (id LIKE 'imported_%' OR id LIKE 'zip_%' OR id LIKE '%_imported%')
+          AND (owner_username IS NULL OR lower(owner_username) = ${cleanUsername})
+        RETURNING id
+      `
+    : await sql`
+        DELETE FROM courses 
+        WHERE (id LIKE 'imported_%' OR id LIKE 'zip_%' OR id LIKE '%_imported%')
+        RETURNING id
+      `;
+
+  // 2. Delete all course_progress records for imported courses
+  let deletedProgress = [];
+  if (cleanUsername) {
+    deletedProgress = await sql`
+      DELETE FROM course_progress 
+      WHERE (course_id LIKE 'imported_%' OR course_id LIKE 'zip_%' OR course_id LIKE '%_imported%')
+        AND lower(username) = ${cleanUsername}
+      RETURNING id
+    `;
+  } else {
+    deletedProgress = await sql`
+      DELETE FROM course_progress 
+      WHERE (course_id LIKE 'imported_%' OR course_id LIKE 'zip_%' OR course_id LIKE '%_imported%')
+      RETURNING id
+    `;
+  }
+
+  return {
+    deletedCourses: deletedCourses.length,
+    deletedProgress: deletedProgress.length
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -567,12 +614,18 @@ export async function saveCourseProgress({
     ON CONFLICT (id) DO UPDATE SET
       last_lesson_id = COALESCE(EXCLUDED.last_lesson_id, course_progress.last_lesson_id),
       playback_time = CASE WHEN EXCLUDED.playback_time > 0 THEN EXCLUDED.playback_time ELSE course_progress.playback_time END,
-      completed_lessons = (SELECT COALESCE(json_agg(DISTINCT value), '[]'::json) FROM json_array_elements_text(course_progress.completed_lessons::json || EXCLUDED.completed_lessons::json)),
-      quiz_scores = course_progress.quiz_scores::jsonb || EXCLUDED.quiz_scores::jsonb,
-      notes = course_progress.notes::jsonb || EXCLUDED.notes::jsonb,
-      lesson_completed_at = course_progress.lesson_completed_at::jsonb || EXCLUDED.lesson_completed_at::jsonb,
+      completed_lessons = (
+        SELECT COALESCE(jsonb_agg(DISTINCT val), '[]'::jsonb)::text
+        FROM jsonb_array_elements_text(
+          COALESCE(NULLIF(course_progress.completed_lessons, ''), '[]')::jsonb || 
+          COALESCE(NULLIF(EXCLUDED.completed_lessons, ''), '[]')::jsonb
+        ) AS t(val)
+      ),
+      quiz_scores = (COALESCE(NULLIF(course_progress.quiz_scores, ''), '{}')::jsonb || COALESCE(NULLIF(EXCLUDED.quiz_scores, ''), '{}')::jsonb)::text,
+      notes = (COALESCE(NULLIF(course_progress.notes, ''), '{}')::jsonb || COALESCE(NULLIF(EXCLUDED.notes, ''), '{}')::jsonb)::text,
+      lesson_completed_at = (COALESCE(NULLIF(course_progress.lesson_completed_at, ''), '{}')::jsonb || COALESCE(NULLIF(EXCLUDED.lesson_completed_at, ''), '{}')::jsonb)::text,
       progress_percent = GREATEST(course_progress.progress_percent, EXCLUDED.progress_percent),
-      completed = course_progress.completed OR EXCLUDED.completed,
+      completed = GREATEST(course_progress.completed, EXCLUDED.completed),
       updated_at = EXCLUDED.updated_at
   `;
 

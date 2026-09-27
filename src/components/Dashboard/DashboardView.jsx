@@ -13,25 +13,31 @@ import {
   ArrowRight, 
   CheckCircle2, 
   Filter,
-  Play
+  Play,
+  Trash2
 } from 'lucide-react';
 import { calculateLevel } from '../../utils/storage';
 import CourseCard from '../CourseCard';
 import { soundFX } from '../../utils/soundEffects';
+import RemoveImportedDataModal from '../LocalImport/RemoveImportedDataModal';
 
 export default function DashboardView({ 
   user, 
-  courses, 
+  courses = [], 
   onSelectCourse, 
   onOpenImport, 
   onOpenCreate, 
   onOpenLeaderboard,
   onDeleteCourse,
+  onRemoveAllImportedData,
   searchQuery
 }) {
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [sortBy, setSortBy] = useState('recommended');
+  const [showRemoveModal, setShowRemoveModal] = useState(false);
   const levelInfo = calculateLevel(user.xp);
+
+  const importedCourses = (courses || []).filter(c => c.isImported || c.id?.startsWith('imported_') || c.id?.startsWith('zip_') || c.id?.includes('imported'));
 
   // Derive unique categories from all courses dynamically!
   const allCategories = ['All', ...Array.from(new Set(courses.map(c => c.category).filter(Boolean)))];
@@ -252,14 +258,38 @@ export default function DashboardView({
             </p>
           </div>
 
-          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-muted)', fontSize: '0.82rem' }}>
-            Sort
-            <select value={sortBy} onChange={event => setSortBy(event.target.value)} aria-label="Sort courses" style={{ background: 'var(--bg-secondary)', color: '#fff', padding: '8px 10px', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)' }}>
-              <option value="recommended">Recommended</option>
-              <option value="title">Title</option>
-              <option value="progress">Progress</option>
-            </select>
-          </label>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+            {importedCourses.length > 0 && (
+              <button
+                type="button"
+                onClick={() => { soundFX.playClick(); setShowRemoveModal(true); }}
+                className="ghost-btn"
+                style={{
+                  padding: '7px 14px',
+                  fontSize: '0.82rem',
+                  color: '#fca5a5',
+                  border: '1px solid rgba(244, 63, 94, 0.35)',
+                  background: 'rgba(244, 63, 94, 0.08)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}
+                title="Remove all imported courses and associated progress"
+              >
+                <Trash2 size={13} />
+                Remove Imported ({importedCourses.length})
+              </button>
+            )}
+
+            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-muted)', fontSize: '0.82rem' }}>
+              Sort
+              <select value={sortBy} onChange={event => setSortBy(event.target.value)} aria-label="Sort courses" style={{ background: 'var(--bg-secondary)', color: '#fff', padding: '8px 10px', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)' }}>
+                <option value="recommended">Recommended</option>
+                <option value="title">Title</option>
+                <option value="progress">Progress</option>
+              </select>
+            </label>
+          </div>
 
           {/* Category Filter Pills (Auto-populated & touch scrollable!) */}
           <div className="dashboard-category-pills">
@@ -297,6 +327,18 @@ export default function DashboardView({
           </div>
         )}
       </div>
+
+      {showRemoveModal && (
+        <RemoveImportedDataModal
+          importedCourses={importedCourses}
+          onClose={() => setShowRemoveModal(false)}
+          onConfirm={async () => {
+            if (onRemoveAllImportedData) {
+              return await onRemoveAllImportedData();
+            }
+          }}
+        />
+      )}
     </div>
   );
 }

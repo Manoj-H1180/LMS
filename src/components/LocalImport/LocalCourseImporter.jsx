@@ -16,22 +16,30 @@ import {
   UploadCloud,
   ArrowRight,
   Zap,
-  Tag
+  Tag,
+  Trash2
 } from 'lucide-react';
 import { 
   parseLocalDirectoryFiles, 
   parseZipCourse 
 } from '../../utils/courseImporter';
-import { clearAllCoursesFromDisk } from '../../utils/storage';
 import { soundFX } from '../../utils/soundEffects';
 import { triggerConfetti } from '../../utils/confettiHelper';
+import RemoveImportedDataModal from './RemoveImportedDataModal';
 
-export default function LocalCourseImporter({ onCourseImported, onOpenCourse }) {
+export default function LocalCourseImporter({ 
+  onCourseImported, 
+  onOpenCourse,
+  importedCourses = [],
+  onRemoveAllImportedData
+}) {
   const [activeTab, setActiveTab] = useState('folder'); // 'folder' | 'zip' | 'instant'
   const [isProcessing, setIsProcessing] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [previewCourse, setPreviewCourse] = useState(null);
   const [scannedSummary, setScannedSummary] = useState(null);
+  const [showRemoveModal, setShowRemoveModal] = useState(false);
+  const [actionFeedback, setActionFeedback] = useState('');
 
   const folderInputRef = useRef(null);
   const zipInputRef = useRef(null);
@@ -112,8 +120,6 @@ export default function LocalCourseImporter({ onCourseImported, onOpenCourse }) 
     if (!previewCourse) return;
     soundFX.playLevelUp();
     triggerConfetti.cannon();
-    // Clear ALL previously stored courses from SQLite & cache so old names don't persist
-    clearAllCoursesFromDisk();
     onCourseImported(previewCourse);
     // Reset inputs so same folder can be re-imported
     if (folderInputRef.current) folderInputRef.current.value = '';
@@ -122,11 +128,14 @@ export default function LocalCourseImporter({ onCourseImported, onOpenCourse }) 
     setScannedSummary(null);
   };
 
-  const handleClearAllCourses = () => {
-    if (!window.confirm('This will remove all saved courses from SQLite storage on disk. Your progress data is kept. Continue?')) return;
-    clearAllCoursesFromDisk();
+  const handleOpenRemoveModal = () => {
     soundFX.playClick();
-    setErrorMsg('All saved courses cleared from SQLite on disk. You can now re-import fresh.');
+    if (!importedCourses || importedCourses.length === 0) {
+      setActionFeedback('No imported courses currently found to remove.');
+      setTimeout(() => setActionFeedback(''), 3500);
+      return;
+    }
+    setShowRemoveModal(true);
   };
 
   const triggerFolderPick = () => {
@@ -220,30 +229,50 @@ export default function LocalCourseImporter({ onCourseImported, onOpenCourse }) 
           Upload ZIP Archive
         </button>
 
-        {/* Clear stale courses from localStorage */}
+        {/* Remove All Imported Data Button */}
         <button
-          onClick={handleClearAllCourses}
+          onClick={handleOpenRemoveModal}
+          disabled={!importedCourses || importedCourses.length === 0}
           style={{
             marginLeft: 'auto',
             padding: '10px 18px',
-            fontSize: '0.82rem',
-            background: 'rgba(244,63,94,0.08)',
-            border: '1px solid rgba(244,63,94,0.25)',
+            fontSize: '0.84rem',
+            background: importedCourses && importedCourses.length > 0 ? 'rgba(244,63,94,0.12)' : 'rgba(255,255,255,0.03)',
+            border: `1px solid ${importedCourses && importedCourses.length > 0 ? 'rgba(244,63,94,0.35)' : 'var(--border-subtle)'}`,
             borderRadius: 'var(--radius-md)',
-            color: '#fca5a5',
-            cursor: 'pointer',
+            color: importedCourses && importedCourses.length > 0 ? '#fca5a5' : 'var(--text-dim)',
+            cursor: importedCourses && importedCourses.length > 0 ? 'pointer' : 'not-allowed',
             display: 'flex',
             alignItems: 'center',
-            gap: '6px',
+            gap: '8px',
             fontFamily: 'var(--font-display)',
             fontWeight: 600,
             transition: 'all 0.18s',
           }}
-          title="Wipe all saved courses from localStorage so you can re-import with correct names"
+          title={importedCourses && importedCourses.length > 0 ? `Remove all ${importedCourses.length} imported course(s) and their data` : "No imported courses to remove"}
         >
-          🗑 Clear Saved Courses
+          <Trash2 size={15} />
+          Remove All Imported Data {importedCourses && importedCourses.length > 0 ? `(${importedCourses.length})` : ''}
         </button>
       </div>
+
+      {/* Action feedback message */}
+      {actionFeedback && (
+        <div style={{
+          padding: '12px 18px',
+          background: 'rgba(59, 130, 246, 0.15)',
+          border: '1px solid rgba(59, 130, 246, 0.35)',
+          borderRadius: 'var(--radius-md)',
+          color: '#93c5fd',
+          fontSize: '0.9rem',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px'
+        }}>
+          <CheckCircle2 size={18} />
+          <span>{actionFeedback}</span>
+        </div>
+      )}
 
       {/* Hidden file inputs — kept outside the clickable div to avoid event conflicts */}
       <input
@@ -480,6 +509,21 @@ export default function LocalCourseImporter({ onCourseImported, onOpenCourse }) 
             </div>
           </div>
         </div>
+      )}
+
+      {showRemoveModal && (
+        <RemoveImportedDataModal
+          importedCourses={importedCourses}
+          onClose={() => setShowRemoveModal(false)}
+          onConfirm={async () => {
+            const res = onRemoveAllImportedData ? await onRemoveAllImportedData() : { count: importedCourses.length };
+            setPreviewCourse(null);
+            setScannedSummary(null);
+            setActionFeedback(`Successfully removed all ${res?.count || importedCourses.length} imported course(s) and associated data.`);
+            setTimeout(() => setActionFeedback(''), 4500);
+            return res;
+          }}
+        />
       )}
     </div>
   );

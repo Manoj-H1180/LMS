@@ -24,6 +24,7 @@ import {
   saveSingleCourseToDisk,
   fetchCoursesFromDisk,
   deleteCourseFromDisk,
+  removeAllImportedDataFromDisk,
   clearLocalAccountCache,
   setActiveAccountCache,
   flushPendingCourseProgress,
@@ -160,6 +161,58 @@ export default function App() {
     });
   };
 
+  // Handle removing all imported courses and data
+  const handleRemoveAllImportedData = async () => {
+    const importedCourses = courses.filter(c => c.isImported || c.id?.startsWith('imported_') || c.id?.startsWith('zip_') || c.id?.includes('imported'));
+    if (importedCourses.length === 0) return { count: 0 };
+
+    const importedCourseIds = new Set(importedCourses.map(c => c.id));
+    const importedLessonIds = new Set();
+    importedCourses.forEach(c => {
+      c.modules?.forEach(m => {
+        m.lessons?.forEach(l => {
+          if (l.id) importedLessonIds.add(l.id);
+        });
+      });
+    });
+
+    // 1. Delete from SQLite/Postgres DB & localStorage cache
+    await removeAllImportedDataFromDisk(authedUser?.username);
+
+    // 2. Remove from courses state
+    setCourses(prev => prev.filter(c => !importedCourseIds.has(c.id)));
+    if (activeCourse && importedCourseIds.has(activeCourse.id)) {
+      setActiveCourse(null);
+    }
+
+    // 3. Clean up user state (completedLessons, lessonCompletedAt, quizScores, lessonNotes)
+    setUser(prev => {
+      const updatedCompleted = (prev.completedLessons || []).filter(id => !importedLessonIds.has(id));
+      const updatedLessonCompletedAt = { ...(prev.lessonCompletedAt || {}) };
+      const updatedQuizScores = { ...(prev.quizScores || {}) };
+      const updatedLessonNotes = { ...(prev.lessonNotes || {}) };
+
+      importedLessonIds.forEach(id => {
+        delete updatedLessonCompletedAt[id];
+        delete updatedQuizScores[id];
+        delete updatedLessonNotes[id];
+      });
+
+      const updatedUser = {
+        ...prev,
+        completedLessons: updatedCompleted,
+        lessonCompletedAt: updatedLessonCompletedAt,
+        quizScores: updatedQuizScores,
+        lessonNotes: updatedLessonNotes
+      };
+      saveUser(updatedUser);
+      return updatedUser;
+    });
+
+    soundFX.playClick();
+    return { count: importedCourses.length };
+  };
+
   // Compute Enrolled / In-Progress count
   const enrolledCourses = courses.filter(course => {
     const lessons = course.modules?.flatMap(module => module.lessons || []) || [];
@@ -238,6 +291,7 @@ export default function App() {
               onOpenCreate={() => setShowCreateModal(true)}
               onOpenLeaderboard={() => setActiveTab('leaderboard')}
               onDeleteCourse={handleDeleteCourse}
+              onRemoveAllImportedData={handleRemoveAllImportedData}
               searchQuery={searchQuery}
             />
           ) : activeTab === 'my_learning' ? (
@@ -276,6 +330,8 @@ export default function App() {
             <LocalCourseImporter
               onCourseImported={handleCourseImported}
               onOpenCourse={(c) => setActiveCourse(c)}
+              importedCourses={courses.filter(c => c.isImported || c.id?.startsWith('imported_') || c.id?.startsWith('zip_') || c.id?.includes('imported'))}
+              onRemoveAllImportedData={handleRemoveAllImportedData}
             />
           ) : activeTab === 'leaderboard' ? (
             <LeaderboardView user={user} />

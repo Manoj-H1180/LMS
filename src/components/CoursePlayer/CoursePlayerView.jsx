@@ -89,6 +89,16 @@ export default function CoursePlayerView({
   const playerShellRef = useRef(null);
   const currentVideoCheckpointRef = useRef(null);
 
+  const currentLesson = allLessons.find(l => l.id === currentLessonId) || allLessons[0];
+  const currentIndex = allLessons.findIndex(l => l.id === currentLessonId);
+  const isLessonCompleted = user.completedLessons?.includes(currentLesson?.id);
+
+  // Calculate course completion
+  const totalLessonsCount = allLessons.length;
+  const completedInCourseCount = allLessons.filter(l => user.completedLessons?.includes(l.id)).length;
+  const progressPercent = totalLessonsCount > 0 ? Math.round((completedInCourseCount / totalLessonsCount) * 100) : 0;
+  const isCourseFullyCompleted = progressPercent === 100;
+
   useEffect(() => {
     if (!onRegisterProgressCheckpoint) return undefined;
     onRegisterProgressCheckpoint(async () => {
@@ -202,16 +212,6 @@ export default function CoursePlayerView({
       }
     });
   }, [course?.id, user.username, allLessons, onUpdateUser, user]);
-
-  const currentLesson = allLessons.find(l => l.id === currentLessonId) || allLessons[0];
-  const currentIndex = allLessons.findIndex(l => l.id === currentLessonId);
-  const isLessonCompleted = user.completedLessons?.includes(currentLesson?.id);
-
-  // Calculate course completion
-  const totalLessonsCount = allLessons.length;
-  const completedInCourseCount = allLessons.filter(l => user.completedLessons?.includes(l.id)).length;
-  const progressPercent = totalLessonsCount > 0 ? Math.round((completedInCourseCount / totalLessonsCount) * 100) : 0;
-  const isCourseFullyCompleted = progressPercent === 100;
 
   // Load lesson note when lesson changes
   useEffect(() => {

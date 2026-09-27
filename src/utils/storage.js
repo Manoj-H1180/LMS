@@ -207,14 +207,37 @@ export async function deleteCourseFromDisk(courseId) {
   }
 }
 
-// Clear all courses from SQLite database on disk & cache
-export async function clearAllCoursesFromDisk() {
-  if (typeof window !== 'undefined') {
-    try {
-      localStorage.removeItem(activeCourseCacheKey);
-    } catch {}
+// Remove all imported courses and data from database and cache
+export async function removeAllImportedDataFromDisk(username) {
+  try {
+    const res = await fetch('/api/courses?scope=imported', {
+      method: 'DELETE'
+    });
+    const data = await res.json().catch(() => ({}));
+
+    if (typeof window !== 'undefined') {
+      try {
+        const raw = localStorage.getItem(activeCourseCacheKey);
+        if (raw) {
+          const courses = JSON.parse(raw);
+          if (Array.isArray(courses)) {
+            const filtered = courses.filter(c => !c.isImported && !c.id?.startsWith('imported_') && !c.id?.startsWith('zip_') && !c.id?.includes('imported'));
+            localStorage.setItem(activeCourseCacheKey, JSON.stringify(filtered));
+          }
+        }
+      } catch {}
+    }
+
+    return data;
+  } catch (err) {
+    console.warn('Failed to remove imported courses from storage:', err);
+    return { success: false, error: err.message };
   }
-  // Bulk course deletion is not available through the browser API.
+}
+
+// Clear all imported courses from database on disk & cache
+export async function clearAllCoursesFromDisk() {
+  return removeAllImportedDataFromDisk();
 }
 
 // Fetch single course progress from SQLite on disk

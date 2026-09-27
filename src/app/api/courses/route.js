@@ -4,6 +4,7 @@ import {
   getAllCourses, 
   upsertCourse, 
   deleteOwnedCourse,
+  deleteImportedData,
   getUserBySession,
   ensureTables
 } from '../../../lib/db';
@@ -32,6 +33,18 @@ export async function POST(request) {
     if (!owner) return NextResponse.json({ success: false, error: 'Authentication required' }, { status: 401 });
     const body = await request.json();
 
+    if (body.action === 'clear_imported') {
+      const result = await deleteImportedData(owner.username);
+      const remaining = await getAllCourses(owner.username);
+      return NextResponse.json({ 
+        success: true, 
+        message: `Successfully removed ${result.deletedCourses} imported course(s) and ${result.deletedProgress} progress record(s).`,
+        deletedCourses: result.deletedCourses,
+        deletedProgress: result.deletedProgress,
+        remainingCount: remaining.length 
+      });
+    }
+
     if (body.action === 'clear') {
       return NextResponse.json({ success: false, error: 'Bulk course deletion is unavailable' }, { status: 400 });
     }
@@ -55,7 +68,21 @@ export async function DELETE(request) {
     const owner = await requireSession();
     if (!owner) return NextResponse.json({ success: false, error: 'Authentication required' }, { status: 401 });
     const { searchParams } = new URL(request.url);
+    const scope = searchParams.get('scope');
+    const action = searchParams.get('action');
     const id = searchParams.get('id');
+
+    if (scope === 'imported' || action === 'clear_imported') {
+      const result = await deleteImportedData(owner.username);
+      const remaining = await getAllCourses(owner.username);
+      return NextResponse.json({ 
+        success: true, 
+        message: `Successfully removed ${result.deletedCourses} imported course(s) and ${result.deletedProgress} progress record(s).`,
+        deletedCourses: result.deletedCourses,
+        deletedProgress: result.deletedProgress,
+        remainingCount: remaining.length 
+      });
+    }
 
     if (!id) {
       return NextResponse.json({ success: false, error: 'Course ID is required' }, { status: 400 });
