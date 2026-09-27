@@ -400,16 +400,12 @@ export default function CoursePlayerView({
               {isCourseFullyCompleted ? 'Completed!' : `${completedInCourseCount}/${totalLessonsCount} (${progressPercent}%)`}
             </div>
             <div className="xp-track" style={{ width: '110px', height: '6px' }}>
-                              <button type="button"
-                              aria-pressed={isOptionSelected}
-                              disabled={quizSubmitted}
-                style={{ 
+              <div style={{
                   height: '100%', 
                   width: `${progressPercent}%`, 
                   borderRadius: 'var(--radius-full)',
                   background: isCourseFullyCompleted ? '#10b981' : 'var(--accent-gradient)' 
-                }} 
-              />
+                }} />
             </div>
           </div>
 

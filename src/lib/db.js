@@ -271,10 +271,10 @@ export async function upsertCourse(course, ownerUsername = null) {
       ${course.author || 'Instructor'},
       ${course.totalDuration || '1h 00m'},
       ${JSON.stringify(persistentModules)},
-      ${Number(course.xpReward || course.totalXP || 100)},
-      ${ownerUsername?.toLowerCase() || course.ownerUsername?.toLowerCase() || null},
       ${course.createdAt || now},
-      ${now}
+      ${now},
+      ${ownerUsername?.toLowerCase() || course.ownerUsername?.toLowerCase() || null},
+      ${Number(course.xpReward || course.totalXP || 100)}
     )
     ON CONFLICT (id) DO UPDATE SET
       title = EXCLUDED.title,
