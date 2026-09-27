@@ -77,13 +77,16 @@ export default function App() {
 
 
 
-  // Sync user state changes to LocalStorage
+  // Sync user state changes to SQLite on disk
   useEffect(() => {
-    saveUser(user);
-    if (user.activeTheme) {
+    if (user) {
+      const userToSave = authedUser?.username ? { ...user, username: authedUser.username } : user;
+      saveUser(userToSave);
+    }
+    if (user?.activeTheme) {
       document.documentElement.setAttribute('data-theme', user.activeTheme);
     }
-  }, [user]);
+  }, [user, authedUser]);
 
   // Sync courses changes to LocalStorage
   useEffect(() => {

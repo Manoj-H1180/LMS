@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { getUser, upsertUser } from '../../../lib/db';
+import { cookies } from 'next/headers';
+import { getUser, upsertUser, getUserBySession } from '../../../lib/db';
 
 const DEFAULT_USER = {
   username: 'default_learner',
@@ -21,10 +22,22 @@ const DEFAULT_USER = {
   soundEnabled: true
 };
 
+async function getAuthenticatedUsername(request, fallbackUsername) {
+  const cookieStore = await cookies();
+  const token = cookieStore.get('lms_session')?.value;
+  if (token) {
+    const sessionUser = getUserBySession(token);
+    if (sessionUser?.username) return sessionUser.username;
+  }
+  return fallbackUsername || 'default_learner';
+}
+
 export async function GET(request) {
   try {
     const { searchParams } = new URL(request.url);
-    const username = searchParams.get('username') || 'default_learner';
+    const paramUsername = searchParams.get('username');
+
+    const username = await getAuthenticatedUsername(request, paramUsername);
 
     let user = getUser(username);
     if (!user) {
@@ -51,8 +64,8 @@ export async function POST(request) {
       return NextResponse.json({ success: false, error: 'Invalid user payload' }, { status: 400 });
     }
 
-    const username = (updatedData.username || 'default_learner').toLowerCase();
-    const existing = getUser(username) || DEFAULT_USER;
+    const username = (await getAuthenticatedUsername(request, updatedData.username)).toLowerCase();
+    const existing = getUser(username) || { ...DEFAULT_USER, username };
 
     const merged = {
       ...existing,

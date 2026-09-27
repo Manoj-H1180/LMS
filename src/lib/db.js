@@ -18,6 +18,12 @@ function initDb() {
   db.exec('PRAGMA synchronous = NORMAL;');
 
   // Create tables
+  ensureTables(db);
+
+  return db;
+}
+
+function ensureTables(db) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
       username TEXT PRIMARY KEY,
@@ -68,9 +74,21 @@ function initDb() {
       username TEXT,
       created_at INTEGER
     );
-  `);
 
-  return db;
+    CREATE TABLE IF NOT EXISTS course_progress (
+      id TEXT PRIMARY KEY,
+      username TEXT NOT NULL,
+      course_id TEXT NOT NULL,
+      last_lesson_id TEXT,
+      playback_time REAL DEFAULT 0,
+      completed_lessons TEXT DEFAULT '[]',
+      quiz_scores TEXT DEFAULT '{}',
+      notes TEXT DEFAULT '{}',
+      progress_percent INTEGER DEFAULT 0,
+      completed INTEGER DEFAULT 0,
+      updated_at INTEGER
+    );
+  `);
 }
 
 // Preserve database connection across Next.js dev reloads
@@ -78,6 +96,8 @@ let dbInstance = globalThis.__lms_db;
 if (!dbInstance) {
   dbInstance = initDb();
   globalThis.__lms_db = dbInstance;
+} else {
+  ensureTables(dbInstance);
 }
 
 export const db = dbInstance;
@@ -350,4 +370,104 @@ export function clearUserSessions(username) {
   const stmt = db.prepare('DELETE FROM sessions WHERE username = ? COLLATE NOCASE');
   stmt.run(username.toLowerCase());
   return true;
+}
+
+// ================= Course Progress API =================
+function formatProgressRecord(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    username: row.username,
+    courseId: row.course_id,
+    lastLessonId: row.last_lesson_id || null,
+    playbackTime: Number(row.playback_time || 0),
+    completedLessons: JSON.parse(row.completed_lessons || '[]'),
+    quizScores: JSON.parse(row.quiz_scores || '{}'),
+    notes: JSON.parse(row.notes || '{}'),
+    progressPercent: Number(row.progress_percent || 0),
+    completed: Boolean(row.completed),
+    updatedAt: row.updated_at
+  };
+}
+
+export function getCourseProgress(username, courseId) {
+  if (!username || !courseId) return null;
+  const id = `${username.toLowerCase()}_${courseId}`;
+  const stmt = db.prepare('SELECT * FROM course_progress WHERE id = ?');
+  const row = stmt.get(id);
+  return formatProgressRecord(row);
+}
+
+export function getAllUserCourseProgress(username) {
+  if (!username) return [];
+  const stmt = db.prepare('SELECT * FROM course_progress WHERE username = ? COLLATE NOCASE ORDER BY updated_at DESC');
+  const rows = stmt.all(username.toLowerCase());
+  return rows.map(formatProgressRecord);
+}
+
+export function saveCourseProgress({
+  username,
+  courseId,
+  lastLessonId,
+  playbackTime = 0,
+  completedLessons = [],
+  quizScores = {},
+  notes = {},
+  progressPercent = 0,
+  completed = false
+}) {
+  if (!username || !courseId) return null;
+  const cleanUsername = username.toLowerCase();
+  const id = `${cleanUsername}_${courseId}`;
+  const now = Date.now();
+
+  const stmt = db.prepare(`
+    INSERT INTO course_progress (
+      id, username, course_id, last_lesson_id, playback_time,
+      completed_lessons, quiz_scores, notes, progress_percent, completed, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      last_lesson_id = COALESCE(excluded.last_lesson_id, course_progress.last_lesson_id),
+      playback_time = excluded.playback_time,
+      completed_lessons = excluded.completed_lessons,
+      quiz_scores = excluded.quiz_scores,
+      notes = excluded.notes,
+      progress_percent = excluded.progress_percent,
+      completed = excluded.completed,
+      updated_at = excluded.updated_at
+  `);
+
+  stmt.run(
+    id,
+    cleanUsername,
+    courseId,
+    lastLessonId || null,
+    Number(playbackTime || 0),
+    JSON.stringify(completedLessons || []),
+    JSON.stringify(quizScores || {}),
+    JSON.stringify(notes || {}),
+    Number(progressPercent || 0),
+    completed ? 1 : 0,
+    now
+  );
+
+  // Sync completed lessons and notes to user profile in SQLite
+  try {
+    const user = getUser(cleanUsername);
+    if (user) {
+      const mergedCompleted = Array.from(new Set([...(user.completedLessons || []), ...completedLessons]));
+      const mergedScores = { ...(user.quizScores || {}), ...quizScores };
+      const mergedNotes = { ...(user.lessonNotes || {}), ...notes };
+      upsertUser({
+        ...user,
+        completedLessons: mergedCompleted,
+        quizScores: mergedScores,
+        lessonNotes: mergedNotes
+      });
+    }
+  } catch (err) {
+    console.warn('Failed to sync course progress to user profile:', err);
+  }
+
+  return getCourseProgress(cleanUsername, courseId);
 }

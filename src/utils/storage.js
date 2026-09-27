@@ -191,4 +191,35 @@ export async function clearAllCoursesFromDisk() {
   }
 }
 
+// Fetch single course progress from SQLite on disk
+export async function fetchCourseProgressFromDisk(courseId, username) {
+  try {
+    const url = `/api/progress?courseId=${encodeURIComponent(courseId)}${username ? `&username=${encodeURIComponent(username)}` : ''}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    if (data.success && data.progress) {
+      return data.progress;
+    }
+  } catch (err) {
+    console.warn('Failed to fetch course progress from SQLite:', err);
+  }
+  return null;
+}
+
+// Save single course progress to SQLite on disk
+export async function saveCourseProgressToDisk(progressData) {
+  try {
+    const res = await fetch('/api/progress', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(progressData)
+    });
+    const data = await res.json();
+    return data.success ? data.progress : null;
+  } catch (err) {
+    console.warn('Failed to save course progress to SQLite:', err);
+  }
+  return null;
+}
+
 export const INITIAL_LEADERBOARD = [];

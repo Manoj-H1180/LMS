@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { soundFX } from '../../utils/soundEffects';
 import { triggerConfetti } from '../../utils/confettiHelper';
+import { fetchCourseProgressFromDisk, saveCourseProgressToDisk } from '../../utils/storage';
 import CertificateModal from '../Certificate/CertificateModal';
 
 export default function CoursePlayerView({ 
@@ -58,6 +59,36 @@ export default function CoursePlayerView({
   const [quizScore, setQuizScore] = useState(0);
 
   const videoRef = useRef(null);
+  const savedPlaybackTimeRef = useRef(0);
+
+  // Hydrate course progress from SQLite on disk
+  useEffect(() => {
+    if (!course?.id) return;
+    fetchCourseProgressFromDisk(course.id, user.username).then(progress => {
+      if (progress) {
+        if (progress.lastLessonId && allLessons.some(l => l.id === progress.lastLessonId)) {
+          setCurrentLessonId(progress.lastLessonId);
+        }
+        if (progress.playbackTime > 0) {
+          savedPlaybackTimeRef.current = progress.playbackTime;
+          if (videoRef.current) {
+            videoRef.current.currentTime = progress.playbackTime;
+          }
+        }
+        if (Array.isArray(progress.completedLessons) && progress.completedLessons.length > 0) {
+          const mergedCompleted = Array.from(new Set([...(user.completedLessons || []), ...progress.completedLessons]));
+          const mergedScores = { ...(user.quizScores || {}), ...(progress.quizScores || {}) };
+          const mergedNotes = { ...(user.lessonNotes || {}), ...(progress.notes || {}) };
+          onUpdateUser({
+            ...user,
+            completedLessons: mergedCompleted,
+            quizScores: mergedScores,
+            lessonNotes: mergedNotes
+          });
+        }
+      }
+    });
+  }, [course?.id]);
 
   const currentLesson = allLessons.find(l => l.id === currentLessonId) || allLessons[0];
   const currentIndex = allLessons.findIndex(l => l.id === currentLessonId);
@@ -79,10 +110,14 @@ export default function CoursePlayerView({
     }
   }, [currentLessonId]);
 
-  // Set video speed
+  // Set video speed and restore playback position
   useEffect(() => {
     if (videoRef.current) {
       videoRef.current.playbackRate = playbackSpeed;
+      if (savedPlaybackTimeRef.current > 0) {
+        videoRef.current.currentTime = savedPlaybackTimeRef.current;
+        savedPlaybackTimeRef.current = 0;
+      }
     }
   }, [playbackSpeed, currentLessonId]);
 
@@ -92,26 +127,35 @@ export default function CoursePlayerView({
     setExpandedModules(prev => ({ ...prev, [idx]: !prev[idx] }));
   };
 
-  // Switch Lesson
+  // Switch Lesson & save position to SQLite
   const selectLesson = (lessonId) => {
     soundFX.playClick();
     setCurrentLessonId(lessonId);
+    saveCourseProgressToDisk({
+      courseId: course.id,
+      username: user.username,
+      lastLessonId: lessonId,
+      completedLessons: user.completedLessons || [],
+      quizScores: user.quizScores || {},
+      notes: user.lessonNotes || {},
+      progressPercent,
+      completed: isCourseFullyCompleted
+    });
   };
 
-  // Mark Lesson Completed
+  // Mark Lesson Completed & persist to SQLite on disk
   const handleCompleteLesson = () => {
     if (!currentLesson) return;
+
+    const earnedXP = currentLesson.xp || 50;
+    const earnedCoins = Math.round(earnedXP / 2);
+    const updatedCompleted = Array.from(new Set([...(user.completedLessons || []), currentLesson.id]));
+    const willCompleteCourse = allLessons.every(l => updatedCompleted.includes(l.id));
+    const newPercent = totalLessonsCount > 0 ? Math.round((allLessons.filter(l => updatedCompleted.includes(l.id)).length / totalLessonsCount) * 100) : 0;
 
     if (!isLessonCompleted) {
       soundFX.playXPEarned();
       triggerConfetti.burst();
-
-      const earnedXP = currentLesson.xp || 50;
-      const earnedCoins = Math.round(earnedXP / 2);
-      const updatedCompleted = [...(user.completedLessons || []), currentLesson.id];
-
-      // Check if this completes the course
-      const willCompleteCourse = allLessons.every(l => updatedCompleted.includes(l.id));
 
       if (willCompleteCourse) {
         soundFX.playLevelUp();
@@ -123,16 +167,30 @@ export default function CoursePlayerView({
         xp: user.xp + earnedXP,
         coins: user.coins + earnedCoins,
         completedLessons: updatedCompleted,
-        unlockedAchievements: willCompleteCourse && !user.unlockedAchievements.includes('course_graduate')
-          ? [...user.unlockedAchievements, 'course_graduate']
-          : user.unlockedAchievements
+        unlockedAchievements: willCompleteCourse && !user.unlockedAchievements?.includes('course_graduate')
+          ? [...(user.unlockedAchievements || []), 'course_graduate']
+          : (user.unlockedAchievements || [])
       });
     }
 
     // Auto-advance to next lesson if available
+    let nextLessonId = currentLesson.id;
     if (currentIndex < allLessons.length - 1) {
-      setCurrentLessonId(allLessons[currentIndex + 1].id);
+      nextLessonId = allLessons[currentIndex + 1].id;
+      setCurrentLessonId(nextLessonId);
     }
+
+    // Save progress to SQLite on disk
+    saveCourseProgressToDisk({
+      courseId: course.id,
+      username: user.username,
+      lastLessonId: nextLessonId,
+      completedLessons: updatedCompleted,
+      progressPercent: newPercent,
+      completed: willCompleteCourse,
+      notes: user.lessonNotes || {},
+      quizScores: user.quizScores || {}
+    });
   };
 
   // Handle Quiz Option Selection
@@ -142,7 +200,7 @@ export default function CoursePlayerView({
     setQuizAnswers(prev => ({ ...prev, [questionId]: optionIndex }));
   };
 
-  // Submit Quiz
+  // Submit Quiz & persist to SQLite on disk
   const handleSubmitQuiz = () => {
     if (!currentLesson.quiz?.questions) return;
     const questions = currentLesson.quiz.questions;
@@ -168,36 +226,66 @@ export default function CoursePlayerView({
       }
 
       // Mark quiz lesson completed
+      const updatedCompleted = Array.from(new Set([...(user.completedLessons || []), currentLesson.id]));
+      const updatedScores = { ...(user.quizScores || {}), [currentLesson.id]: percent };
+      const willCompleteCourse = allLessons.every(l => updatedCompleted.includes(l.id));
+      const newPercent = totalLessonsCount > 0 ? Math.round((allLessons.filter(l => updatedCompleted.includes(l.id)).length / totalLessonsCount) * 100) : 0;
+
       if (!isLessonCompleted) {
         const earnedXP = currentLesson.xp || 120;
         onUpdateUser({
           ...user,
           xp: user.xp + earnedXP,
           coins: user.coins + 60,
-          completedLessons: [...(user.completedLessons || []), currentLesson.id],
-          quizScores: { ...(user.quizScores || {}), [currentLesson.id]: percent },
-          unlockedAchievements: percent === 100 && !user.unlockedAchievements.includes('quiz_master')
-            ? [...user.unlockedAchievements, 'quiz_master']
-            : user.unlockedAchievements
+          completedLessons: updatedCompleted,
+          quizScores: updatedScores,
+          unlockedAchievements: percent === 100 && !user.unlockedAchievements?.includes('quiz_master')
+            ? [...(user.unlockedAchievements || []), 'quiz_master']
+            : (user.unlockedAchievements || [])
         });
       }
+
+      // Save to SQLite on disk
+      saveCourseProgressToDisk({
+        courseId: course.id,
+        username: user.username,
+        lastLessonId: currentLesson.id,
+        completedLessons: updatedCompleted,
+        quizScores: updatedScores,
+        notes: user.lessonNotes || {},
+        progressPercent: newPercent,
+        completed: willCompleteCourse
+      });
     } else {
       soundFX.playIncorrect();
     }
   };
 
-  // Save Note
+  // Save Note & persist to SQLite on disk
   const handleSaveNote = () => {
     soundFX.playClick();
+    const updatedNotes = {
+      ...(user.lessonNotes || {}),
+      [currentLesson.id]: currentNote
+    };
+
+    saveCourseProgressToDisk({
+      courseId: course.id,
+      username: user.username,
+      lastLessonId: currentLesson.id,
+      notes: updatedNotes,
+      completedLessons: user.completedLessons || [],
+      quizScores: user.quizScores || {},
+      progressPercent,
+      completed: isCourseFullyCompleted
+    });
+
     onUpdateUser({
       ...user,
-      lessonNotes: {
-        ...(user.lessonNotes || {}),
-        [currentLesson.id]: currentNote
-      },
-      unlockedAchievements: !user.unlockedAchievements.includes('note_taker') && Object.keys(user.lessonNotes || {}).length >= 2
-        ? [...user.unlockedAchievements, 'note_taker']
-        : user.unlockedAchievements
+      lessonNotes: updatedNotes,
+      unlockedAchievements: !user.unlockedAchievements?.includes('note_taker') && Object.keys(updatedNotes).length >= 2
+        ? [...(user.unlockedAchievements || []), 'note_taker']
+        : (user.unlockedAchievements || [])
     });
   };
 
@@ -450,6 +538,36 @@ export default function CoursePlayerView({
                 controls
                 style={{ width: '100%', maxHeight: '520px', display: 'block', backgroundColor: '#000' }}
                 onEnded={handleCompleteLesson}
+                onPause={() => {
+                  if (videoRef.current && currentLesson) {
+                    saveCourseProgressToDisk({
+                      courseId: course.id,
+                      username: user.username,
+                      lastLessonId: currentLesson.id,
+                      playbackTime: Math.floor(videoRef.current.currentTime),
+                      completedLessons: user.completedLessons || [],
+                      progressPercent,
+                      completed: isCourseFullyCompleted
+                    });
+                  }
+                }}
+                onTimeUpdate={() => {
+                  if (videoRef.current && currentLesson) {
+                    const sec = Math.floor(videoRef.current.currentTime);
+                    if (sec > 0 && sec % 10 === 0 && savedPlaybackTimeRef.current !== sec) {
+                      savedPlaybackTimeRef.current = sec;
+                      saveCourseProgressToDisk({
+                        courseId: course.id,
+                        username: user.username,
+                        lastLessonId: currentLesson.id,
+                        playbackTime: sec,
+                        completedLessons: user.completedLessons || [],
+                        progressPercent,
+                        completed: isCourseFullyCompleted
+                      });
+                    }
+                  }
+                }}
               />
 
               {/* Video Speed Controls Overlay */}
