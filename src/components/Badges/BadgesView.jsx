@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 // ACHIEVEMENTS will be fetched from API (removed static import)
 import { soundFX } from '../../utils/soundEffects';
+import { ACHIEVEMENTS } from '../../utils/catalog';
 
 const ICON_MAP = {
   Sparkles,

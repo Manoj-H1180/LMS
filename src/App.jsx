@@ -44,30 +44,27 @@ export default function App() {
 
   useEffect(() => {
     setMounted(true);
+    let cancelled = false;
 
-    // Verify authentication against SQLite database on disk
-    checkServerSession().then(serverUser => {
-      if (serverUser) {
-        setActiveAccountCache(serverUser.username);
-        setAuthedUser(serverUser);
-        setUser(serverUser);
-      }
-    });
-
-    // Fetch the matching account's courses after session verification.
-    checkServerSession().then(serverUser => {
-      if (!serverUser) return;
+    // Verify the session once, then load only that account's course list.
+    checkServerSession().then(async serverUser => {
+      if (cancelled || !serverUser) return;
       setActiveAccountCache(serverUser.username);
-      fetchCoursesFromDisk().then(diskCourses => {
-        if (Array.isArray(diskCourses)) setCourses(diskCourses);
-      });
+      setAuthedUser(serverUser);
+      setUser({ ...DEFAULT_USER, ...serverUser });
+
+      const diskCourses = await fetchCoursesFromDisk();
+      if (!cancelled && Array.isArray(diskCourses)) setCourses(diskCourses);
     });
+
+    return () => { cancelled = true; };
   }, []);
 
   const handleAuthenticated = (userData) => {
     setActiveAccountCache(userData.username);
     setAuthedUser(userData);
     setUser({ ...DEFAULT_USER, ...userData });
+    setCourses([]);
     fetchCoursesFromDisk().then(diskCourses => {
       if (Array.isArray(diskCourses)) setCourses(diskCourses);
     });

@@ -234,7 +234,7 @@ export default function AuthScreen({ onAuthenticated }) {
             <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               <div>
                 <label className="lbl">Username</label>
-                <input id="auth-username" className="auth-input" type="text" placeholder="your_username" value={username} onChange={e => setUsername(e.target.value)} autoComplete="username" autoFocus />
+                <input id="auth-username" className="auth-input" type="text" placeholder="your_username" value={username} onChange={e => setUsername(e.target.value)} autoComplete="username" />
               </div>
               <div>
                 <label className="lbl">Password</label>
@@ -272,7 +272,7 @@ export default function AuthScreen({ onAuthenticated }) {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                 <div>
                   <label className="lbl">Display Name</label>
-                  <input id="signup-name" className="auth-input" type="text" placeholder="Alex Mercer" value={displayName} onChange={e => setDisplayName(e.target.value)} autoFocus />
+                  <input id="signup-name" className="auth-input" type="text" placeholder="Alex Mercer" value={displayName} onChange={e => setDisplayName(e.target.value)} />
                 </div>
                 <div>
                   <label className="lbl">Username</label>

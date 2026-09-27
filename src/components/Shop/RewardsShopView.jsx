@@ -15,6 +15,7 @@ import {
 // SHOP_ITEMS will be fetched from API (removed static import)
 import { soundFX } from '../../utils/soundEffects';
 import { triggerConfetti } from '../../utils/confettiHelper';
+import { SHOP_ITEMS } from '../../utils/catalog';
 
 const ICON_MAP = {
   Sparkles,
