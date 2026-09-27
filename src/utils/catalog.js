@@ -1,5 +1,5 @@
 export const ACHIEVEMENTS = [
-  { id: 'first_lesson', title: 'First Steps', description: 'Complete your first lesson.', category: 'Learning', tier: 'Bronze', icon: 'BookOpen', xpReward: 25 },
+  { id: 'first_lesson', title: 'First Steps', description: 'Complete your first lesson.', category: 'Learning', tier: 'Bronze', icon: 'Trophy', xpReward: 25 },
   { id: 'lesson_10', title: 'Curious Mind', description: 'Complete 10 lessons.', category: 'Learning', tier: 'Silver', icon: 'Brain', xpReward: 75 },
   { id: 'lesson_50', title: 'Knowledge Seeker', description: 'Complete 50 lessons.', category: 'Learning', tier: 'Gold', icon: 'GraduationCap', xpReward: 150 },
   { id: 'quiz_perfect', title: 'Perfectionist', description: 'Earn a perfect score on a quiz.', category: 'Quizzes', tier: 'Gold', icon: 'Award', xpReward: 100 },

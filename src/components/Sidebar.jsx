@@ -11,6 +11,7 @@ import {
   Medal, 
   ShoppingBag,
   Sparkles,
+  Book,
   X
 } from 'lucide-react';
 import { soundFX } from '../utils/soundEffects';
@@ -27,7 +28,7 @@ export default function Sidebar({
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'courses', label: 'Explore Courses', icon: Compass, badge: coursesCount },
     { id: 'my_learning', label: 'My Learning', icon: GraduationCap, badge: enrolledCount > 0 ? enrolledCount : null },
-    { id: 'notes', label: 'Study Notes', icon: BookOpen },
+    { id: 'notes', label: 'Study Notes', icon: Book },
     { id: 'import', label: 'Local Course Import', icon: FolderInput, highlight: true },
     { id: 'studio', label: 'Course Studio', icon: PlusCircle },
     { id: 'leaderboard', label: 'Leaderboard', icon: Trophy },
