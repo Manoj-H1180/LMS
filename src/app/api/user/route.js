@@ -1,33 +1,47 @@
 import { NextResponse } from 'next/server';
+import { getUser, upsertUser } from '../../../lib/db';
 
-let serverUser = {
-  name: 'Alex Mercer',
-  avatar: '👨‍💻',
+const DEFAULT_USER = {
+  username: 'default_learner',
+  name: 'Learner',
+  avatar: '🎓',
   title: 'Novice Scholar',
-  xp: 320,
-  coins: 480,
-  streak: 3,
+  xp: 0,
+  coins: 100,
+  streak: 0,
   streakFrozen: false,
   doubleXPUntil: null,
   lastActiveDate: new Date().toISOString().split('T')[0],
-  completedLessons: ['les_1_1'],
-  quizScores: {
-    'les_1_3': 100
-  },
-  unlockedAchievements: ['first_step', 'streak_3'],
+  completedLessons: [],
+  quizScores: {},
+  unlockedAchievements: [],
   inventory: ['theme_cyberpunk'],
   activeTheme: 'cyberpunk',
-  lessonNotes: {
-    'les_1_1': 'Islands architecture hydrates selectively based on idle time or viewport visibility.'
-  },
+  lessonNotes: {},
   soundEnabled: true
 };
 
-export async function GET() {
-  return NextResponse.json({
-    success: true,
-    user: serverUser,
-  });
+export async function GET(request) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const username = searchParams.get('username') || 'default_learner';
+
+    let user = getUser(username);
+    if (!user) {
+      user = upsertUser({ ...DEFAULT_USER, username });
+    }
+
+    return NextResponse.json({
+      success: true,
+      user,
+    });
+  } catch (error) {
+    console.error('Error getting user from SQLite:', error);
+    return NextResponse.json(
+      { success: false, error: 'Failed to retrieve user from SQLite' },
+      { status: 500 }
+    );
+  }
 }
 
 export async function POST(request) {
@@ -37,18 +51,25 @@ export async function POST(request) {
       return NextResponse.json({ success: false, error: 'Invalid user payload' }, { status: 400 });
     }
 
-    serverUser = {
-      ...serverUser,
+    const username = (updatedData.username || 'default_learner').toLowerCase();
+    const existing = getUser(username) || DEFAULT_USER;
+
+    const merged = {
+      ...existing,
       ...updatedData,
+      username,
       lastActiveDate: new Date().toISOString().split('T')[0],
     };
 
+    const savedUser = upsertUser(merged);
+
     return NextResponse.json({
       success: true,
-      message: 'User progress saved on Next.js server',
-      user: serverUser,
+      message: 'User progress persisted to SQLite database on disk',
+      user: savedUser,
     });
   } catch (error) {
+    console.error('Error saving user to SQLite:', error);
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
 }

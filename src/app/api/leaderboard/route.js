@@ -1,20 +1,17 @@
 import { NextResponse } from 'next/server';
-import { INITIAL_LEADERBOARD } from '../../../utils/storage';
+import { getAllLeaderboardUsers } from '../../../lib/db';
 
 export async function GET(request) {
   try {
     const { searchParams } = new URL(request.url);
-    const userXP = parseInt(searchParams.get('xp') || '320', 10);
+    const currentUser = searchParams.get('username') || '';
 
-    // Dynamic leaderboard sort
-    const leaderboard = INITIAL_LEADERBOARD.map(item => {
-      if (item.isCurrentUser) {
-        return { ...item, xp: userXP };
-      }
-      return item;
-    }).sort((a, b) => b.xp - a.xp).map((item, index) => ({
-      ...item,
-      rank: index + 1,
+    const users = getAllLeaderboardUsers();
+
+    // Map and mark the current active user
+    const leaderboard = users.map(u => ({
+      ...u,
+      isCurrentUser: currentUser ? u.username.toLowerCase() === currentUser.toLowerCase() : false
     }));
 
     return NextResponse.json({
@@ -22,6 +19,7 @@ export async function GET(request) {
       leaderboard,
     });
   } catch (error) {
+    console.error('Error fetching leaderboard from SQLite:', error);
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
 }

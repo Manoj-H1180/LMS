@@ -58,14 +58,34 @@ export default function AuthScreen({ onAuthenticated }) {
     setError('');
     if (!username.trim() || !password) { setError('Please fill in all fields.'); return; }
     setIsLoading(true);
-    await new Promise(r => setTimeout(r, 600));
-    const accounts = getAccounts();
-    const account = accounts[username.toLowerCase()];
-    if (!account) { setError('No account found with that username.'); setIsLoading(false); return; }
-    if (account.password !== btoa(password)) { setError('Incorrect password.'); setIsLoading(false); return; }
-    saveSession(account.userData);
-    onAuthenticated(account.userData);
-    setIsLoading(false);
+
+    try {
+      const res = await fetch('/api/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'login', username: username.trim(), password })
+      });
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        setError(data.error || 'Login failed. Please check credentials.');
+        setIsLoading(false);
+        return;
+      }
+
+      saveSession(data.user);
+      onAuthenticated(data.user);
+    } catch {
+      // Offline fallback
+      const accounts = getAccounts();
+      const account = accounts[username.toLowerCase()];
+      if (!account) { setError('No account found with that username.'); setIsLoading(false); return; }
+      if (account.password !== btoa(password)) { setError('Incorrect password.'); setIsLoading(false); return; }
+      saveSession(account.userData);
+      onAuthenticated(account.userData);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleSignup = async (e) => {
@@ -75,33 +95,60 @@ export default function AuthScreen({ onAuthenticated }) {
     if (username.trim().length < 3) { setError('Username must be at least 3 characters.'); return; }
     if (password.length < 6) { setError('Password must be at least 6 characters.'); return; }
     if (password !== confirmPassword) { setError('Passwords do not match.'); return; }
-    const accounts = getAccounts();
-    if (accounts[username.toLowerCase()]) { setError('Username already taken. Try another.'); return; }
     setIsLoading(true);
-    await new Promise(r => setTimeout(r, 700));
-    const userData = {
-      username: username.toLowerCase(),
-      name: displayName.trim(),
-      avatar: selectedAvatar,
-      title: 'Novice Scholar',
-      xp: 0,
-      coins: 100,
-      streak: 0,
-      streakFrozen: false,
-      doubleXPUntil: null,
-      lastActiveDate: new Date().toISOString().split('T')[0],
-      completedLessons: [],
-      quizScores: {},
-      unlockedAchievements: [],
-      inventory: ['theme_cyberpunk'],
-      activeTheme: 'cyberpunk',
-      lessonNotes: {},
-      soundEnabled: true,
-    };
-    saveAccount(username, { password: btoa(password), userData });
-    saveSession(userData);
-    onAuthenticated(userData);
-    setIsLoading(false);
+
+    try {
+      const res = await fetch('/api/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'signup',
+          username: username.trim(),
+          password,
+          displayName: displayName.trim(),
+          avatar: selectedAvatar
+        })
+      });
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        setError(data.error || 'Failed to create account.');
+        setIsLoading(false);
+        return;
+      }
+
+      saveAccount(username, { password: btoa(password), userData: data.user });
+      saveSession(data.user);
+      onAuthenticated(data.user);
+    } catch {
+      // Offline fallback
+      const accounts = getAccounts();
+      if (accounts[username.toLowerCase()]) { setError('Username already taken. Try another.'); setIsLoading(false); return; }
+      const userData = {
+        username: username.toLowerCase(),
+        name: displayName.trim(),
+        avatar: selectedAvatar,
+        title: 'Novice Scholar',
+        xp: 0,
+        coins: 100,
+        streak: 0,
+        streakFrozen: false,
+        doubleXPUntil: null,
+        lastActiveDate: new Date().toISOString().split('T')[0],
+        completedLessons: [],
+        quizScores: {},
+        unlockedAchievements: [],
+        inventory: ['theme_cyberpunk'],
+        activeTheme: 'cyberpunk',
+        lessonNotes: {},
+        soundEnabled: true,
+      };
+      saveAccount(username, { password: btoa(password), userData });
+      saveSession(userData);
+      onAuthenticated(userData);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const ORB_CONFIGS = [
@@ -304,7 +351,7 @@ export default function AuthScreen({ onAuthenticated }) {
         </div>
 
         <p style={{ textAlign: 'center', marginTop: '14px', fontSize: '0.73rem', color: 'var(--text-dim)' }}>
-          🔒 All data stored locally on your device — no external servers.
+          💾 All accounts, courses & progress stored in SQLite on disk.
         </p>
       </div>
     </div>

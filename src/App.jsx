@@ -19,7 +19,10 @@ import {
   saveUser, 
   loadCourses, 
   saveCourses, 
-  calculateLevel 
+  calculateLevel,
+  fetchCoursesFromDisk,
+  fetchUserFromDisk,
+  deleteCourseFromDisk
 } from './utils/storage';
 import { soundFX } from './utils/soundEffects';
 
@@ -41,26 +44,28 @@ export default function App() {
     const session = getStoredSession();
     if (session) {
       setAuthedUser(session);
-      // Merge auth profile over stored user
       setUser(prev => ({ ...prev, ...session }));
+      // Fetch latest profile from SQLite on disk
+      if (session.username) {
+        fetchUserFromDisk(session.username).then(dbUser => {
+          if (dbUser) setUser(dbUser);
+        });
+      }
     }
 
-    const localCourses = loadCourses();
-    setCourses(localCourses);
-
-    // Initial sync with Next.js built-in API route
-    fetch('/api/courses')
-      .then(res => res.json())
-      .then(data => {
-        if (data && Array.isArray(data.courses) && data.courses.length > 0) {
-          setCourses(prev => {
-            const ids = new Set(prev.map(c => c.id));
-            const newServerCourses = data.courses.filter(c => !ids.has(c.id));
-            return newServerCourses.length > 0 ? [...prev, ...newServerCourses] : prev;
-          });
+    // Fetch courses from SQLite database on disk
+    fetchCoursesFromDisk().then(diskCourses => {
+      if (Array.isArray(diskCourses) && diskCourses.length > 0) {
+        setCourses(diskCourses);
+      } else {
+        // If SQLite is empty, migrate any existing cached courses to SQLite
+        const localCourses = loadCourses();
+        if (localCourses.length > 0) {
+          saveCourses(localCourses);
+          setCourses(localCourses);
         }
-      })
-      .catch(() => {});
+      }
+    });
   }, []);
 
   const handleAuthenticated = (userData) => {
@@ -148,6 +153,7 @@ export default function App() {
 
   // Handle course delete
   const handleDeleteCourse = (courseId) => {
+    deleteCourseFromDisk(courseId);
     setCourses(prev => prev.filter(c => c.id !== courseId));
     if (activeCourse?.id === courseId) {
       setActiveCourse(null);

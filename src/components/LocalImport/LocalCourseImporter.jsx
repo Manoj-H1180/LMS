@@ -22,6 +22,7 @@ import {
   parseLocalDirectoryFiles, 
   parseZipCourse 
 } from '../../utils/courseImporter';
+import { clearAllCoursesFromDisk } from '../../utils/storage';
 import { soundFX } from '../../utils/soundEffects';
 import { triggerConfetti } from '../../utils/confettiHelper';
 
@@ -111,8 +112,8 @@ export default function LocalCourseImporter({ onCourseImported, onOpenCourse }) 
     if (!previewCourse) return;
     soundFX.playLevelUp();
     triggerConfetti.cannon();
-    // Clear ALL previously stored courses from localStorage so old "Module N:" titles don't persist
-    try { localStorage.removeItem('nexus_lms_courses_v3'); } catch {}
+    // Clear ALL previously stored courses from SQLite & cache so old names don't persist
+    clearAllCoursesFromDisk();
     onCourseImported(previewCourse);
     // Reset inputs so same folder can be re-imported
     if (folderInputRef.current) folderInputRef.current.value = '';
@@ -122,10 +123,10 @@ export default function LocalCourseImporter({ onCourseImported, onOpenCourse }) 
   };
 
   const handleClearAllCourses = () => {
-    if (!window.confirm('This will remove all saved courses from local storage. Your progress data is kept. Continue?')) return;
-    try { localStorage.removeItem('nexus_lms_courses_v3'); } catch {}
+    if (!window.confirm('This will remove all saved courses from SQLite storage on disk. Your progress data is kept. Continue?')) return;
+    clearAllCoursesFromDisk();
     soundFX.playClick();
-    setErrorMsg('All saved courses cleared. You can now re-import fresh.');
+    setErrorMsg('All saved courses cleared from SQLite on disk. You can now re-import fresh.');
   };
 
   const triggerFolderPick = () => {

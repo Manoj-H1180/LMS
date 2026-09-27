@@ -1,4 +1,4 @@
-// Mock data removed; start with an empty catalog.
+// SQLite persistent storage helpers with localStorage fallback/cache
 const INITIAL_COURSES = [];
 
 const STORAGE_KEY_USER = 'nexus_lms_user_v3';
@@ -33,11 +33,12 @@ export function calculateLevel(xp = 0) {
 }
 
 export const DEFAULT_USER = {
+  username: 'default_learner',
   name: 'Learner',
   avatar: '🎓',
   title: 'Novice Scholar',
   xp: 0,
-  coins: 0,
+  coins: 100,
   streak: 0,
   streakFrozen: false,
   doubleXPUntil: null,
@@ -51,6 +52,7 @@ export const DEFAULT_USER = {
   soundEnabled: true
 };
 
+// Synchronous local cache loader (used for instant render)
 export function loadUser() {
   if (typeof window === 'undefined') return DEFAULT_USER;
   try {
@@ -63,21 +65,42 @@ export function loadUser() {
   }
 }
 
-export function saveUser(user) {
-  if (typeof window === 'undefined') return;
+// Fetch user from SQLite database on disk
+export async function fetchUserFromDisk(username) {
   try {
-    localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(user));
-    // Asynchronously sync with Next.js backend API
-    fetch('/api/user', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(user)
-    }).catch(() => {});
+    const url = username ? `/api/user?username=${encodeURIComponent(username)}` : '/api/user';
+    const res = await fetch(url);
+    const data = await res.json();
+    if (data.success && data.user) {
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(data.user));
+      }
+      return data.user;
+    }
   } catch (e) {
-    console.error('Failed to save user state', e);
+    console.warn('Could not fetch user from SQLite disk, using local cache:', e);
   }
+  return loadUser();
 }
 
+// Persist user state to SQLite database on disk & cache
+export function saveUser(user) {
+  if (typeof window === 'undefined' || !user) return;
+  try {
+    localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(user));
+  } catch {}
+
+  // Sync to SQLite on disk
+  fetch('/api/user', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(user)
+  }).catch((err) => {
+    console.warn('Failed to sync user to SQLite:', err);
+  });
+}
+
+// Synchronous courses loader from cache
 export function loadCourses() {
   if (typeof window === 'undefined') return INITIAL_COURSES;
   try {
@@ -91,20 +114,81 @@ export function loadCourses() {
   }
 }
 
+// Fetch all courses from SQLite database on disk
+export async function fetchCoursesFromDisk() {
+  try {
+    const res = await fetch('/api/courses');
+    const data = await res.json();
+    if (data.success && Array.isArray(data.courses)) {
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(STORAGE_KEY_COURSES, JSON.stringify(data.courses));
+      }
+      return data.courses;
+    }
+  } catch (e) {
+    console.warn('Could not fetch courses from SQLite disk, using local cache:', e);
+  }
+  return loadCourses();
+}
+
+// Persist course list to SQLite database on disk
 export function saveCourses(courses) {
   if (typeof window === 'undefined') return;
   try {
     localStorage.setItem(STORAGE_KEY_COURSES, JSON.stringify(courses));
-    // Asynchronously sync with Next.js backend API
-    fetch('/api/courses', {
+  } catch {}
+
+  // Sync to SQLite on disk
+  fetch('/api/courses', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ courses })
+  }).catch((err) => {
+    console.warn('Failed to sync courses to SQLite:', err);
+  });
+}
+
+// Save a single course to SQLite database on disk
+export async function saveSingleCourseToDisk(course) {
+  try {
+    const res = await fetch('/api/courses', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ courses })
-    }).catch(() => {});
-  } catch (e) {
-    console.error('Failed to save courses', e);
+      body: JSON.stringify({ course })
+    });
+    return await res.json();
+  } catch (err) {
+    console.warn('Failed to save single course to SQLite:', err);
   }
 }
 
-// Clean production leaderboard starts empty and is populated by active learners
+// Delete a course from SQLite database on disk
+export async function deleteCourseFromDisk(courseId) {
+  try {
+    await fetch(`/api/courses?id=${encodeURIComponent(courseId)}`, {
+      method: 'DELETE'
+    });
+  } catch (err) {
+    console.warn('Failed to delete course from SQLite:', err);
+  }
+}
+
+// Clear all courses from SQLite database on disk & cache
+export async function clearAllCoursesFromDisk() {
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.removeItem(STORAGE_KEY_COURSES);
+    } catch {}
+  }
+  try {
+    await fetch('/api/courses', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'clear' })
+    });
+  } catch (err) {
+    console.warn('Failed to clear courses from SQLite:', err);
+  }
+}
+
 export const INITIAL_LEADERBOARD = [];
