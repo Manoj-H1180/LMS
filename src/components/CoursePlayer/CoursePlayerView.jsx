@@ -620,8 +620,14 @@ export default function CoursePlayerView({
                 preload="metadata"
                 playsInline
                 aria-label={currentLesson.title}
-                onLoadedMetadata={event => setVideoState(state => ({ ...state, duration: event.currentTarget.duration, currentTime: event.currentTarget.currentTime, error: '' }))}
-                onDurationChange={event => setVideoState(state => ({ ...state, duration: event.currentTarget.duration }))}
+                onLoadedMetadata={event => {
+                  const { duration, currentTime } = event.currentTarget;
+                  setVideoState(state => ({ ...state, duration, currentTime, error: '' }));
+                }}
+                onDurationChange={event => {
+                  const { duration } = event.currentTarget;
+                  setVideoState(state => ({ ...state, duration }));
+                }}
                 onTimeUpdate={event => {
                   const video = event.currentTarget;
                   const sec = Math.floor(video.currentTime);
@@ -637,7 +643,10 @@ export default function CoursePlayerView({
                   setVideoState(state => ({ ...state, paused: true, currentTime: video.currentTime }));
                   saveCourseProgressToDisk({ courseId: course.id, lastLessonId: currentLesson.id, playbackTime: Math.floor(video.currentTime), completedLessons: user.completedLessons || [], lessonCompletedAt: user.lessonCompletedAt || {}, quizScores: user.quizScores || {}, notes: user.lessonNotes || {}, progressPercent, completed: isCourseFullyCompleted });
                 }}
-                onVolumeChange={event => setVideoState(state => ({ ...state, volume: event.currentTarget.volume, muted: event.currentTarget.muted }))}
+                onVolumeChange={event => {
+                  const { volume, muted } = event.currentTarget;
+                  setVideoState(state => ({ ...state, volume, muted }));
+                }}
                 onError={() => setVideoState(state => ({ ...state, error: 'This video could not be loaded. Check the lesson URL and your connection, then try again.' }))}
                 onEnded={handleCompleteLesson}
                 className="video-player-media"
