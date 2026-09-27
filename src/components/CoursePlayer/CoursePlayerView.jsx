@@ -38,7 +38,8 @@ export default function CoursePlayerView({
   course, 
   user, 
   onUpdateUser, 
-  onBack 
+  onBack,
+  onRegisterProgressCheckpoint
 }) {
   // Flatten all lessons for navigation
   const courseModules = (Array.isArray(course.modules) ? course.modules : []).filter(Boolean);
@@ -71,6 +72,31 @@ export default function CoursePlayerView({
   const hydratedProgressCourseRef = useRef(null);
   const notesTimerRef = useRef(null);
   const playerShellRef = useRef(null);
+  const currentVideoCheckpointRef = useRef(null);
+
+  useEffect(() => {
+    if (!onRegisterProgressCheckpoint) return undefined;
+    onRegisterProgressCheckpoint(async () => {
+      const video = videoRef.current;
+      const checkpoint = video && currentLesson
+        ? {
+            courseId: course.id,
+            lastLessonId: currentLesson.id,
+            playbackTime: Math.floor(video.currentTime || 0),
+            completedLessons: user.completedLessons || [],
+            lessonCompletedAt: user.lessonCompletedAt || {},
+            quizScores: user.quizScores || {},
+            notes: user.lessonNotes || {},
+            progressPercent,
+            completed: isCourseFullyCompleted
+          }
+        : currentVideoCheckpointRef.current;
+      if (!checkpoint) return null;
+      currentVideoCheckpointRef.current = checkpoint;
+      return saveCourseProgressToDisk(checkpoint);
+    });
+    return () => onRegisterProgressCheckpoint(null);
+  }, [onRegisterProgressCheckpoint, course.id, currentLesson, user, progressPercent, isCourseFullyCompleted]);
 
   const formatTime = (seconds) => {
     if (!Number.isFinite(seconds)) return '0:00';
@@ -632,16 +658,39 @@ export default function CoursePlayerView({
                   const video = event.currentTarget;
                   const sec = Math.floor(video.currentTime);
                   setVideoState(state => ({ ...state, currentTime: video.currentTime, buffered: video.buffered.length ? video.buffered.end(video.buffered.length - 1) : 0 }));
+                  currentVideoCheckpointRef.current = {
+                    courseId: course.id,
+                    lastLessonId: currentLesson.id,
+                    playbackTime: sec,
+                    completedLessons: user.completedLessons || [],
+                    lessonCompletedAt: user.lessonCompletedAt || {},
+                    quizScores: user.quizScores || {},
+                    notes: user.lessonNotes || {},
+                    progressPercent,
+                    completed: isCourseFullyCompleted
+                  };
                   if (sec > 0 && sec % 10 === 0 && savedPlaybackTimeRef.current !== sec) {
                     savedPlaybackTimeRef.current = sec;
-                    saveCourseProgressToDisk({ courseId: course.id, lastLessonId: currentLesson.id, playbackTime: sec, completedLessons: user.completedLessons || [], lessonCompletedAt: user.lessonCompletedAt || {}, quizScores: user.quizScores || {}, notes: user.lessonNotes || {}, progressPercent, completed: isCourseFullyCompleted });
+                    saveCourseProgressToDisk(currentVideoCheckpointRef.current);
                   }
                 }}
                 onPlay={() => setVideoState(state => ({ ...state, paused: false, error: '' }))}
                 onPause={event => {
                   const video = event.currentTarget;
                   setVideoState(state => ({ ...state, paused: true, currentTime: video.currentTime }));
-                  saveCourseProgressToDisk({ courseId: course.id, lastLessonId: currentLesson.id, playbackTime: Math.floor(video.currentTime), completedLessons: user.completedLessons || [], lessonCompletedAt: user.lessonCompletedAt || {}, quizScores: user.quizScores || {}, notes: user.lessonNotes || {}, progressPercent, completed: isCourseFullyCompleted });
+                  const checkpoint = {
+                    courseId: course.id,
+                    lastLessonId: currentLesson.id,
+                    playbackTime: Math.floor(video.currentTime),
+                    completedLessons: user.completedLessons || [],
+                    lessonCompletedAt: user.lessonCompletedAt || {},
+                    quizScores: user.quizScores || {},
+                    notes: user.lessonNotes || {},
+                    progressPercent,
+                    completed: isCourseFullyCompleted
+                  };
+                  currentVideoCheckpointRef.current = checkpoint;
+                  saveCourseProgressToDisk(checkpoint);
                 }}
                 onVolumeChange={event => {
                   const { volume, muted } = event.currentTarget;

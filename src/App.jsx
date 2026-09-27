@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Navbar from './components/Navbar';
 import Sidebar from './components/Sidebar';
 import DashboardView from './components/Dashboard/DashboardView';
@@ -26,6 +26,7 @@ import {
   deleteCourseFromDisk,
   clearLocalAccountCache,
   setActiveAccountCache,
+  flushPendingCourseProgress,
   DEFAULT_USER
 } from './utils/storage';
 import { soundFX } from './utils/soundEffects';
@@ -42,6 +43,7 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [celebration, setCelebration] = useState(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const progressCheckpointRef = useRef(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -76,6 +78,9 @@ export default function App() {
   };
 
   const handleLogout = async () => {
+    const checkpoint = progressCheckpointRef.current;
+    if (checkpoint) await checkpoint();
+    await flushPendingCourseProgress();
     await clearSession();
     clearLocalAccountCache();
     setAuthedUser(null);
@@ -89,10 +94,7 @@ export default function App() {
 
   // Sync user state changes to SQLite on disk
   useEffect(() => {
-    if (user) {
-      const userToSave = authedUser?.username ? { ...user, username: authedUser.username } : user;
-      saveUser(userToSave);
-    }
+    if (user && authedUser?.username) saveUser({ ...user, username: authedUser.username });
     if (user?.activeTheme) {
       document.documentElement.setAttribute('data-theme', user.activeTheme);
     }
@@ -224,6 +226,7 @@ export default function App() {
                 user={user}
                 onUpdateUser={setUser}
                 onBack={() => setActiveCourse(null)}
+                onRegisterProgressCheckpoint={checkpoint => { progressCheckpointRef.current = checkpoint; }}
               />
             </CoursePlayerBoundary>
           ) : activeTab === 'dashboard' || activeTab === 'courses' ? (

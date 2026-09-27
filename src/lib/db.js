@@ -214,6 +214,7 @@ function formatProgressRecord(row) {
     lastLessonId: row.last_lesson_id || null,
     playbackTime: Number(row.playback_time || 0),
     completedLessons: JSON.parse(row.completed_lessons || '[]'),
+    lessonCompletedAt: JSON.parse(row.lesson_completed_at || '{}'),
     quizScores: JSON.parse(row.quiz_scores || '{}'),
     notes: JSON.parse(row.notes || '{}'),
     progressPercent: Number(row.progress_percent || 0),

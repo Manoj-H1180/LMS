@@ -4,6 +4,7 @@ const INITIAL_COURSES = [];
 const STORAGE_KEY_USER = 'nexus_lms_user_v3';
 const STORAGE_KEY_COURSES = 'nexus_lms_courses_v3';
 let activeCourseCacheKey = STORAGE_KEY_COURSES;
+let progressSaveQueue = Promise.resolve();
 
 export const LEVEL_TIERS = [
   { level: 1, title: 'Novice Scholar', minXP: 0, maxXP: 250 },
@@ -233,18 +234,31 @@ export async function fetchCourseProgressFromDisk(courseId, username) {
 
 // Save single course progress to SQLite on disk
 export async function saveCourseProgressToDisk(progressData) {
-  try {
+  const save = progressSaveQueue.then(async () => {
     const res = await fetch('/api/progress', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(progressData)
     });
-    const data = await res.json();
-    return data.success ? data.progress : null;
-  } catch (err) {
-    console.warn('Failed to save course progress to SQLite:', err);
-  }
-  return null;
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) {
+      throw new Error(data.error || `Progress save failed (${res.status})`);
+    }
+    return data.progress;
+  });
+  progressSaveQueue = save.catch(error => {
+    console.error('Failed to save course progress to the database:', error);
+    return null;
+  });
+  return save.catch(error => {
+    console.error('Failed to save course progress to the database:', error);
+    return null;
+  });
+}
+
+// Wait for every already-started progress write before ending an authenticated session.
+export function flushPendingCourseProgress() {
+  return progressSaveQueue;
 }
 
 export const INITIAL_LEADERBOARD = [];
