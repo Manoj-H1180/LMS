@@ -30,6 +30,7 @@ export default function DashboardView({
   searchQuery
 }) {
   const [selectedCategory, setSelectedCategory] = useState('All');
+  const [sortBy, setSortBy] = useState('recommended');
   const levelInfo = calculateLevel(user.xp);
 
   // Derive unique categories from all courses dynamically!
@@ -49,22 +50,25 @@ export default function DashboardView({
     const matchesCategory = selectedCategory === 'All' || course.category === selectedCategory;
     const matchesSearch = !searchQuery || 
       course.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      course.category.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (course.category || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
       course.tags?.some(t => t.toLowerCase().includes(searchQuery.toLowerCase()));
     return matchesCategory && matchesSearch;
+  }).sort((a, b) => {
+    if (sortBy === 'title') return a.title.localeCompare(b.title);
+    if (sortBy === 'progress') {
+      const progress = course => {
+        const lessons = course.modules?.flatMap(module => module.lessons || []) || [];
+        return lessons.length ? lessons.filter(lesson => user.completedLessons?.includes(lesson.id)).length / lessons.length : 0;
+      };
+      return progress(b) - progress(a);
+    }
+    return Number(b.updatedAt || b.createdAt || 0) - Number(a.updatedAt || a.createdAt || 0);
   });
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
       {/* Hero Gamification Banner */}
-      <div className="glass-panel" style={{
-        padding: '36px',
-        position: 'relative',
-        overflow: 'hidden',
-        background: 'linear-gradient(135deg, rgba(30, 38, 66, 0.8) 0%, rgba(15, 20, 34, 0.9) 100%)',
-        border: '1px solid var(--border-glow)',
-        boxShadow: 'var(--shadow-lg)'
-      }}>
+      <div className="glass-panel dashboard-hero-banner">
         {/* Glow orb */}
         <div style={{
           position: 'absolute',
@@ -76,19 +80,13 @@ export default function DashboardView({
           pointerEvents: 'none'
         }} />
 
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
-          gap: '28px',
-          position: 'relative',
-          zIndex: 2
-        }}>
+        <div className="dashboard-hero-grid">
           {/* Left Welcome Text */}
           <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: '12px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
               <span className="badge-pill" style={{ color: '#fbbf24', borderColor: 'rgba(245, 158, 11, 0.35)' }}>
                 <Sparkles size={13} color="#f59e0b" />
-                ACADEMY RANK: {levelInfo.title}
+                RANK: {levelInfo.title}
               </span>
               <span className="badge-pill" style={{ color: '#f87171', borderColor: 'rgba(239, 68, 68, 0.35)' }}>
                 <span className="animate-flame">
@@ -98,7 +96,7 @@ export default function DashboardView({
               </span>
             </div>
 
-            <h1 style={{ fontSize: '2.2rem', lineHeight: 1.2 }}>
+            <h1 className="dashboard-hero-title">
               Welcome back, <span style={{ background: 'var(--accent-gradient)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>{user.name}</span>
             </h1>
 
@@ -107,14 +105,14 @@ export default function DashboardView({
             </p>
 
             {/* Quick Action Buttons */}
-            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginTop: '8px' }}>
+            <div className="dashboard-hero-actions">
               <button
                 onClick={() => { soundFX.playClick(); onOpenImport(); }}
                 className="glow-btn"
                 style={{ background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)', boxShadow: '0 4px 18px rgba(16, 185, 129, 0.4)' }}
               >
                 <FolderInput size={17} />
-                Import Local Course Folder
+                Import Course Folder
               </button>
 
               <button
@@ -220,17 +218,13 @@ export default function DashboardView({
       {inProgressCourses.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <h2 style={{ fontSize: '1.3rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <h2 style={{ fontSize: '1.25rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Play size={18} color="var(--accent-primary)" />
               Jump Back In
             </h2>
           </div>
 
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
-            gap: '18px'
-          }}>
+          <div className="courses-responsive-grid">
             {inProgressCourses.map(course => (
               <CourseCard
                 key={course.id}
@@ -244,11 +238,13 @@ export default function DashboardView({
         </div>
       )}
 
+      {searchQuery && <p role="status" style={{ color: 'var(--text-muted)', fontSize: '0.88rem' }}>Showing {filteredCourses.length} course{filteredCourses.length === 1 ? '' : 's'} for “{searchQuery}”.</p>}
+
       {/* Browse Courses & Dynamic Categories */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '14px' }}>
           <div>
-            <h2 style={{ fontSize: '1.4rem' }}>
+            <h2 style={{ fontSize: '1.3rem' }}>
               All Courses & Libraries
             </h2>
             <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
@@ -256,14 +252,23 @@ export default function DashboardView({
             </p>
           </div>
 
-          {/* Category Filter Pills (Auto-populated!) */}
-          <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '4px' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-muted)', fontSize: '0.82rem' }}>
+            Sort
+            <select value={sortBy} onChange={event => setSortBy(event.target.value)} aria-label="Sort courses" style={{ background: 'var(--bg-secondary)', color: '#fff', padding: '8px 10px', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)' }}>
+              <option value="recommended">Recommended</option>
+              <option value="title">Title</option>
+              <option value="progress">Progress</option>
+            </select>
+          </label>
+
+          {/* Category Filter Pills (Auto-populated & touch scrollable!) */}
+          <div className="dashboard-category-pills">
             {allCategories.map(cat => (
               <button
                 key={cat}
                 onClick={() => { setSelectedCategory(cat); soundFX.playClick(); }}
                 className={selectedCategory === cat ? 'glow-btn' : 'ghost-btn'}
-                style={{ padding: '7px 16px', fontSize: '0.82rem' }}
+                style={{ padding: '7px 16px', fontSize: '0.82rem', whiteSpace: 'nowrap', flexShrink: 0 }}
               >
                 {cat}
               </button>
@@ -272,11 +277,7 @@ export default function DashboardView({
         </div>
 
         {/* Courses Grid */}
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
-          gap: '24px'
-        }}>
+        <div className="courses-responsive-grid">
           {filteredCourses.map(course => (
             <CourseCard
               key={course.id}

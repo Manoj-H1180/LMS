@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { getUser, upsertUser, getUserBySession } from '../../../lib/db';
+import { getUser, upsertUser, getUserBySession, saveAuthenticatedUserUpdates } from '../../../lib/db';
 
 const DEFAULT_USER = {
   username: 'default_learner',
@@ -22,22 +22,16 @@ const DEFAULT_USER = {
   soundEnabled: true
 };
 
-async function getAuthenticatedUsername(request, fallbackUsername) {
-  const cookieStore = await cookies();
-  const token = cookieStore.get('lms_session')?.value;
-  if (token) {
-    const sessionUser = await getUserBySession(token);
-    if (sessionUser?.username) return sessionUser.username;
-  }
-  return fallbackUsername || 'default_learner';
+async function getSessionUser() {
+  const token = (await cookies()).get('lms_session')?.value;
+  return token ? getUserBySession(token) : null;
 }
 
-export async function GET(request) {
+export async function GET() {
   try {
-    const { searchParams } = new URL(request.url);
-    const paramUsername = searchParams.get('username');
-
-    const username = await getAuthenticatedUsername(request, paramUsername);
+    const sessionUser = await getSessionUser();
+    if (!sessionUser) return NextResponse.json({ success: false, error: 'Authentication required' }, { status: 401 });
+    const username = sessionUser.username;
 
     let user = await getUser(username);
     if (!user) {
@@ -58,17 +52,10 @@ export async function POST(request) {
       return NextResponse.json({ success: false, error: 'Invalid user payload' }, { status: 400 });
     }
 
-    const username = (await getAuthenticatedUsername(request, updatedData.username)).toLowerCase();
-    const existing = (await getUser(username)) || { ...DEFAULT_USER, username };
-
-    const merged = {
-      ...existing,
-      ...updatedData,
-      username,
-      lastActiveDate: new Date().toISOString().split('T')[0],
-    };
-
-    const savedUser = await upsertUser(merged);
+    const sessionUser = await getSessionUser();
+    if (!sessionUser) return NextResponse.json({ success: false, error: 'Authentication required' }, { status: 401 });
+    const username = sessionUser.username.toLowerCase();
+    const savedUser = await saveAuthenticatedUserUpdates(username, updatedData);
 
     return NextResponse.json({ success: true, message: 'User progress saved to Neon Postgres', user: savedUser });
   } catch (error) {

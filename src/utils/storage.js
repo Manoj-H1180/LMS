@@ -1,8 +1,9 @@
-// SQLite persistent storage helpers with localStorage fallback/cache
+// Neon Postgres persistent storage helpers with localStorage fallback/cache
 const INITIAL_COURSES = [];
 
 const STORAGE_KEY_USER = 'nexus_lms_user_v3';
 const STORAGE_KEY_COURSES = 'nexus_lms_courses_v3';
+let activeCourseCacheKey = STORAGE_KEY_COURSES;
 
 export const LEVEL_TIERS = [
   { level: 1, title: 'Novice Scholar', minXP: 0, maxXP: 250 },
@@ -65,6 +66,10 @@ export function loadUser() {
   }
 }
 
+export function setActiveAccountCache(username) {
+  activeCourseCacheKey = username ? `${STORAGE_KEY_COURSES}_${username.toLowerCase()}` : STORAGE_KEY_COURSES;
+}
+
 // Fetch user from SQLite database on disk
 export async function fetchUserFromDisk(username) {
   try {
@@ -96,15 +101,23 @@ export function saveUser(user) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(user)
   }).catch((err) => {
-    console.warn('Failed to sync user to SQLite:', err);
+    console.warn('Failed to sync user to Neon Postgres:', err);
   });
+}
+
+export function clearLocalAccountCache() {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.removeItem(STORAGE_KEY_USER);
+    localStorage.removeItem(activeCourseCacheKey);
+  } catch {}
 }
 
 // Synchronous courses loader from cache
 export function loadCourses() {
   if (typeof window === 'undefined') return INITIAL_COURSES;
   try {
-    const raw = localStorage.getItem(STORAGE_KEY_COURSES);
+    const raw = localStorage.getItem(activeCourseCacheKey);
     if (!raw) return INITIAL_COURSES;
     const stored = JSON.parse(raw);
     if (!Array.isArray(stored)) return INITIAL_COURSES;
@@ -119,9 +132,9 @@ export async function fetchCoursesFromDisk() {
   try {
     const res = await fetch('/api/courses');
     const data = await res.json();
-    if (data.success && Array.isArray(data.courses)) {
+    if (res.ok && data.success && Array.isArray(data.courses)) {
       if (typeof window !== 'undefined') {
-        localStorage.setItem(STORAGE_KEY_COURSES, JSON.stringify(data.courses));
+        localStorage.setItem(activeCourseCacheKey, JSON.stringify(data.courses));
       }
       return data.courses;
     }
@@ -135,17 +148,10 @@ export async function fetchCoursesFromDisk() {
 export function saveCourses(courses) {
   if (typeof window === 'undefined') return;
   try {
-    localStorage.setItem(STORAGE_KEY_COURSES, JSON.stringify(courses));
+    localStorage.setItem(activeCourseCacheKey, JSON.stringify(courses));
   } catch {}
 
-  // Sync to SQLite on disk
-  fetch('/api/courses', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ courses })
-  }).catch((err) => {
-    console.warn('Failed to sync courses to SQLite:', err);
-  });
+  // Private courses are saved individually by the import and course studio flows.
 }
 
 // Save a single course to SQLite database on disk
@@ -156,7 +162,9 @@ export async function saveSingleCourseToDisk(course) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ course })
     });
-    return await res.json();
+    const data = await res.json();
+    if (!res.ok || !data.success) throw new Error(data.error || 'Course could not be saved.');
+    return data;
   } catch (err) {
     console.warn('Failed to save single course to SQLite:', err);
   }
@@ -165,11 +173,14 @@ export async function saveSingleCourseToDisk(course) {
 // Delete a course from SQLite database on disk
 export async function deleteCourseFromDisk(courseId) {
   try {
-    await fetch(`/api/courses?id=${encodeURIComponent(courseId)}`, {
+    const res = await fetch(`/api/courses?id=${encodeURIComponent(courseId)}`, {
       method: 'DELETE'
     });
+    if (!res.ok) throw new Error('Course deletion failed.');
+    return true;
   } catch (err) {
-    console.warn('Failed to delete course from SQLite:', err);
+    console.warn('Failed to delete course from Neon Postgres:', err);
+    return false;
   }
 }
 
@@ -177,18 +188,10 @@ export async function deleteCourseFromDisk(courseId) {
 export async function clearAllCoursesFromDisk() {
   if (typeof window !== 'undefined') {
     try {
-      localStorage.removeItem(STORAGE_KEY_COURSES);
+      localStorage.removeItem(activeCourseCacheKey);
     } catch {}
   }
-  try {
-    await fetch('/api/courses', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'clear' })
-    });
-  } catch (err) {
-    console.warn('Failed to clear courses from SQLite:', err);
-  }
+  // Bulk course deletion is not available through the browser API.
 }
 
 // Fetch single course progress from SQLite on disk

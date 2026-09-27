@@ -13,16 +13,19 @@ import RewardsShopView from './components/Shop/RewardsShopView';
 import CelebrationModal from './components/Celebration/CelebrationModal';
 import CourseCard from './components/CourseCard';
 import AuthScreen, { checkServerSession, clearSession } from './components/Auth/AuthScreen';
+import MobileBottomNav from './components/MobileBottomNav';
 
 import { 
   loadUser, 
   saveUser, 
   loadCourses, 
-  saveCourses, 
-  calculateLevel,
+  saveCourses,
+  saveSingleCourseToDisk,
   fetchCoursesFromDisk,
-  fetchUserFromDisk,
-  deleteCourseFromDisk
+  deleteCourseFromDisk,
+  clearLocalAccountCache,
+  setActiveAccountCache,
+  DEFAULT_USER
 } from './utils/storage';
 import { soundFX } from './utils/soundEffects';
 
@@ -37,6 +40,7 @@ export default function App() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [celebration, setCelebration] = useState(null);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   useEffect(() => {
     setMounted(true);
@@ -44,34 +48,38 @@ export default function App() {
     // Verify authentication against SQLite database on disk
     checkServerSession().then(serverUser => {
       if (serverUser) {
+        setActiveAccountCache(serverUser.username);
         setAuthedUser(serverUser);
         setUser(serverUser);
       }
     });
 
-    // Fetch courses from SQLite database on disk
-    fetchCoursesFromDisk().then(diskCourses => {
-      if (Array.isArray(diskCourses) && diskCourses.length > 0) {
-        setCourses(diskCourses);
-      } else {
-        // If SQLite is empty, migrate any existing cached courses to SQLite
-        const localCourses = loadCourses();
-        if (localCourses.length > 0) {
-          saveCourses(localCourses);
-          setCourses(localCourses);
-        }
-      }
+    // Fetch the matching account's courses after session verification.
+    checkServerSession().then(serverUser => {
+      if (!serverUser) return;
+      setActiveAccountCache(serverUser.username);
+      fetchCoursesFromDisk().then(diskCourses => {
+        if (Array.isArray(diskCourses)) setCourses(diskCourses);
+      });
     });
   }, []);
 
   const handleAuthenticated = (userData) => {
+    setActiveAccountCache(userData.username);
     setAuthedUser(userData);
-    setUser(prev => ({ ...prev, ...userData }));
+    setUser({ ...DEFAULT_USER, ...userData });
+    fetchCoursesFromDisk().then(diskCourses => {
+      if (Array.isArray(diskCourses)) setCourses(diskCourses);
+    });
   };
 
   const handleLogout = async () => {
     await clearSession();
+    clearLocalAccountCache();
     setAuthedUser(null);
+    setCourses([]);
+    setActiveAccountCache(null);
+    setUser(DEFAULT_USER);
     soundFX.playClick();
   };
 
@@ -90,77 +98,68 @@ export default function App() {
 
   // Sync courses changes to LocalStorage
   useEffect(() => {
-    saveCourses(courses);
-  }, [courses]);
+    if (authedUser) saveCourses(courses);
+  }, [courses, authedUser]);
 
   // Handle course imported from local directory or ZIP
   const handleCourseImported = (newCourse) => {
-    const updatedCourses = [newCourse, ...courses];
-    setCourses(updatedCourses);
+    const ownedCourse = { ...newCourse, ownerUsername: authedUser.username };
+    setCourses(prev => [ownedCourse, ...prev.filter(course => course.id !== ownedCourse.id)]);
+    saveSingleCourseToDisk(ownedCourse);
 
     // Award +300 XP and achievement for local importing
-    const updatedAchievements = !user.unlockedAchievements.includes('folder_master')
-      ? [...user.unlockedAchievements, 'folder_master']
-      : user.unlockedAchievements;
+    const alreadyImported = courses.some(course => course.id === newCourse.id);
+    const updatedAchievements = !(user.unlockedAchievements || []).includes('folder_master')
+      ? [...(user.unlockedAchievements || []), 'folder_master']
+      : (user.unlockedAchievements || []);
 
-    const updatedUser = {
-      ...user,
-      xp: user.xp + 300,
-      coins: user.coins + 150,
-      unlockedAchievements: updatedAchievements
-    };
-
-    setUser(updatedUser);
+    setUser(prev => ({ ...prev, unlockedAchievements: updatedAchievements }));
 
     setCelebration({
-      title: "Course Imported Successfully!",
+      title: alreadyImported ? "Course Refreshed" : "Course Imported Successfully!",
       subtitle: `Analyzed folders and auto-generated ${newCourse.modules.length} modules for "${newCourse.title}".`,
-      xpGained: 300
+      xpGained: 0
     });
 
     // Auto open the new course
-    setActiveCourse(newCourse);
+    setActiveCourse(ownedCourse);
   };
 
   // Handle course created from studio
   const handleCourseCreated = (newCourse) => {
-    const updatedCourses = [newCourse, ...courses];
-    setCourses(updatedCourses);
+    const ownedCourse = { ...newCourse, ownerUsername: authedUser.username };
+    setCourses(prev => [ownedCourse, ...prev.filter(course => course.id !== ownedCourse.id)]);
+    saveSingleCourseToDisk(ownedCourse);
 
-    const updatedAchievements = !user.unlockedAchievements.includes('creator_initiate')
-      ? [...user.unlockedAchievements, 'creator_initiate']
-      : user.unlockedAchievements;
+    const alreadyCreated = courses.some(course => course.id === newCourse.id);
+    const updatedAchievements = !(user.unlockedAchievements || []).includes('creator_initiate')
+      ? [...(user.unlockedAchievements || []), 'creator_initiate']
+      : (user.unlockedAchievements || []);
 
-    const updatedUser = {
-      ...user,
-      xp: user.xp + 350,
-      coins: user.coins + 175,
-      unlockedAchievements: updatedAchievements
-    };
-
-    setUser(updatedUser);
+    setUser(prev => ({ ...prev, unlockedAchievements: updatedAchievements }));
 
     setCelebration({
-      title: "Course Published!",
+      title: alreadyCreated ? "Course Updated" : "Course Published!",
       subtitle: `Your custom course "${newCourse.title}" is now live with interactive modules & quizzes.`,
-      xpGained: 350
+      xpGained: 0
     });
 
-    setActiveCourse(newCourse);
+    setActiveCourse(ownedCourse);
   };
 
   // Handle course delete
   const handleDeleteCourse = (courseId) => {
-    deleteCourseFromDisk(courseId);
-    setCourses(prev => prev.filter(c => c.id !== courseId));
-    if (activeCourse?.id === courseId) {
-      setActiveCourse(null);
-    }
+    deleteCourseFromDisk(courseId).then(deleted => {
+      if (!deleted) return;
+      setCourses(prev => prev.filter(c => c.id !== courseId));
+      if (activeCourse?.id === courseId) setActiveCourse(null);
+    });
   };
 
   // Compute Enrolled / In-Progress count
   const enrolledCourses = courses.filter(course => {
-    return course.modules?.some(m => m.lessons?.some(l => user.completedLessons?.includes(l.id)));
+    const lessons = course.modules?.flatMap(module => module.lessons || []) || [];
+    return lessons.some(lesson => user.completedLessons?.includes(lesson.id));
   });
 
   const categories = Array.from(new Set(courses.map(c => c.category).filter(Boolean)));
@@ -179,6 +178,7 @@ export default function App() {
           activeTab={activeTab}
           setActiveTab={(tab) => {
             setActiveCourse(null);
+            setMobileNavOpen(false);
             if (tab === 'studio') {
               setShowCreateModal(true);
             } else {
@@ -187,6 +187,8 @@ export default function App() {
           }}
           coursesCount={courses.length}
           enrolledCount={enrolledCourses.length}
+          mobileOpen={mobileNavOpen}
+          onCloseMobile={() => setMobileNavOpen(false)}
         />
       )}
 
@@ -207,10 +209,11 @@ export default function App() {
             setActiveTab('shop');
           }}
           onLogout={handleLogout}
+          onToggleMobileMenu={() => setMobileNavOpen(prev => !prev)}
         />
 
 
-        <main className="content-body">
+        <main id="main-content" className="content-body" tabIndex={-1}>
           {/* Active Course Learning View */}
           {activeCourse ? (
             <CoursePlayerView
@@ -240,7 +243,7 @@ export default function App() {
               </div>
 
               {enrolledCourses.length > 0 ? (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '24px' }}>
+                <div className="courses-responsive-grid">
                   {enrolledCourses.map(course => (
                     <CourseCard
                       key={course.id}
@@ -273,8 +276,43 @@ export default function App() {
             <BadgesView user={user} onUpdateUser={setUser} />
           ) : activeTab === 'shop' ? (
             <RewardsShopView user={user} onUpdateUser={setUser} />
+          ) : activeTab === 'notes' ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '22px' }}>
+              <div className="glass-panel" style={{ padding: '26px' }}>
+                <h1 style={{ color: '#fff' }}>My Study Notes</h1>
+                <p style={{ color: 'var(--text-muted)', marginTop: '6px' }}>Notes stay linked to their lesson. Open a lesson to edit them.</p>
+              </div>
+              {Object.entries(user.lessonNotes || {}).filter(([, note]) => note?.trim()).length ? (
+                <div className="courses-responsive-grid">
+                  {Object.entries(user.lessonNotes || {}).filter(([, note]) => note?.trim()).map(([lessonId, note]) => {
+                    const course = courses.find(item => item.modules?.some(module => module.lessons?.some(lesson => lesson.id === lessonId)));
+                    const lesson = course?.modules.flatMap(module => module.lessons || []).find(item => item.id === lessonId);
+                    return <article className="glass-panel" key={lessonId} style={{ padding: '20px' }}>
+                      <div style={{ color: 'var(--accent-primary)', fontSize: '0.75rem', fontWeight: 700 }}>{course?.title || 'Course no longer available'}</div>
+                      <h2 style={{ color: '#fff', fontSize: '1.05rem', marginTop: '6px' }}>{lesson?.title || 'Saved lesson note'}</h2>
+                      <p style={{ color: 'var(--text-muted)', marginTop: '12px', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{note}</p>
+                      {course && <button className="ghost-btn" style={{ marginTop: '14px' }} onClick={() => setActiveCourse(course)}>Open lesson</button>}
+                    </article>;
+                  })}
+                </div>
+              ) : <div className="glass-panel" style={{ padding: '36px', textAlign: 'center', color: 'var(--text-muted)' }}>Your saved lesson notes will appear here.</div>}
+            </div>
           ) : null}
         </main>
+
+        {/* Mobile Bottom Navigation Bar — Quick Thumb Navigation on Mobile */}
+        {!activeCourse && (
+          <MobileBottomNav
+            activeTab={activeTab}
+            setActiveTab={(tab) => {
+              setActiveCourse(null);
+              setMobileNavOpen(false);
+              setActiveTab(tab);
+            }}
+            enrolledCount={enrolledCourses.length}
+            onOpenMobileMenu={() => setMobileNavOpen(true)}
+          />
+        )}
       </div>
 
       {/* Visual Course Studio Creator Modal */}

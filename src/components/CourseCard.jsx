@@ -51,9 +51,8 @@ export default function CourseCard({
   };
 
   return (
-    <div 
+    <article
       className="glass-panel glass-panel-hover"
-      onClick={handleCardClick}
       style={{
         display: 'flex',
         flexDirection: 'column',
@@ -210,6 +209,7 @@ export default function CourseCard({
         {/* Action Button Row */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '10px' }}>
           <button 
+            onClick={handleCardClick}
             className={hasStarted ? 'glow-btn' : 'ghost-btn'}
             style={{ 
               flex: 1, 
@@ -263,6 +263,6 @@ export default function CourseCard({
           )}
         </div>
       </div>
-    </div>
+    </article>
   );
 }

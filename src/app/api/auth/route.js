@@ -6,7 +6,10 @@ import {
   upsertUser, 
   createSession, 
   getUserBySession, 
-  deleteSession 
+  deleteSession,
+  hashPassword,
+  verifyPassword,
+  updatePassword
 } from '../../../lib/db';
 
 const SESSION_COOKIE_NAME = 'lms_session';
@@ -74,9 +77,12 @@ export async function POST(request) {
         return NextResponse.json({ success: false, error: 'No account found with that username.' }, { status: 404 });
       }
 
-      const encodedPass = btoa(password);
-      if (account.password !== encodedPass && account.password !== password) {
+      if (!(await verifyPassword(password, account.password))) {
         return NextResponse.json({ success: false, error: 'Incorrect password.' }, { status: 401 });
+      }
+
+      if (!account.password.startsWith('scrypt:')) {
+        await updatePassword(cleanUsername, await hashPassword(password));
       }
 
       const userProfile = await getUser(cleanUsername);
@@ -108,7 +114,7 @@ export async function POST(request) {
 
       const newUser = {
         username: cleanUsername,
-        password: btoa(password),
+        password: await hashPassword(password),
         name: displayName?.trim() || cleanUsername,
         avatar: avatar || '🎓',
         title: 'Novice Scholar',

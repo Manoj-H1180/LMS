@@ -7,23 +7,22 @@ import {
   getUserBySession 
 } from '../../../lib/db';
 
-async function resolveUsername(request, fallbackUsername) {
+async function resolveUsername() {
   const cookieStore = await cookies();
   const token = cookieStore.get('lms_session')?.value;
   if (token) {
     const user = await getUserBySession(token);
     if (user?.username) return user.username;
   }
-  return fallbackUsername || 'default_learner';
+  return null;
 }
 
 export async function GET(request) {
   try {
     const { searchParams } = new URL(request.url);
     const courseId = searchParams.get('courseId');
-    const paramUsername = searchParams.get('username');
-
-    const username = await resolveUsername(request, paramUsername);
+    const username = await resolveUsername();
+    if (!username) return NextResponse.json({ success: false, error: 'Authentication required' }, { status: 401 });
 
     if (courseId) {
       const progress = await getCourseProgress(username, courseId);
@@ -54,13 +53,14 @@ export async function GET(request) {
 export async function POST(request) {
   try {
     const body = await request.json();
-    const { courseId, lastLessonId, playbackTime, completedLessons, quizScores, notes, progressPercent, completed } = body;
+    const { courseId, lastLessonId, playbackTime, completedLessons, quizScores, notes, lessonCompletedAt, progressPercent, completed } = body;
 
     if (!courseId) {
       return NextResponse.json({ success: false, error: 'courseId is required' }, { status: 400 });
     }
 
-    const username = await resolveUsername(request, body.username);
+    const username = await resolveUsername();
+    if (!username) return NextResponse.json({ success: false, error: 'Authentication required' }, { status: 401 });
 
     const savedProgress = await saveCourseProgress({
       username,
@@ -70,6 +70,7 @@ export async function POST(request) {
       completedLessons,
       quizScores,
       notes,
+      lessonCompletedAt,
       progressPercent,
       completed
     });

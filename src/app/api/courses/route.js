@@ -1,15 +1,21 @@
 import { NextResponse } from 'next/server';
+import { cookies } from 'next/headers';
 import { 
   getAllCourses, 
   upsertCourse, 
-  syncCourses, 
-  deleteCourse, 
-  clearAllCourses 
+  deleteOwnedCourse,
+  getUserBySession
 } from '../../../lib/db';
+
+async function requireSession() {
+  const token = (await cookies()).get('lms_session')?.value;
+  return token ? getUserBySession(token) : null;
+}
 
 export async function GET() {
   try {
-    const courses = await getAllCourses();
+    const owner = await requireSession();
+    const courses = await getAllCourses(owner?.username);
     return NextResponse.json({ success: true, count: courses.length, courses });
   } catch (error) {
     console.error('Error fetching courses from Neon Postgres:', error);
@@ -19,20 +25,17 @@ export async function GET() {
 
 export async function POST(request) {
   try {
+    const owner = await requireSession();
+    if (!owner) return NextResponse.json({ success: false, error: 'Authentication required' }, { status: 401 });
     const body = await request.json();
 
     if (body.action === 'clear') {
-      await clearAllCourses();
-      return NextResponse.json({ success: true, message: 'All courses cleared', count: 0 });
+      return NextResponse.json({ success: false, error: 'Bulk course deletion is unavailable' }, { status: 400 });
     }
 
-    if (body.courses && Array.isArray(body.courses)) {
-      const savedCourses = await syncCourses(body.courses);
-      return NextResponse.json({ success: true, message: 'Courses synced to Neon Postgres', count: savedCourses.length, courses: savedCourses });
-    }
-
-    if (body.course && body.course.id) {
-      const saved = await upsertCourse(body.course);
+    const course = body.course || body;
+    if (course.id) {
+      const saved = await upsertCourse(course, owner.username);
       return NextResponse.json({ success: true, message: 'Course saved to Neon Postgres', course: saved });
     }
 
@@ -45,6 +48,8 @@ export async function POST(request) {
 
 export async function DELETE(request) {
   try {
+    const owner = await requireSession();
+    if (!owner) return NextResponse.json({ success: false, error: 'Authentication required' }, { status: 401 });
     const { searchParams } = new URL(request.url);
     const id = searchParams.get('id');
 
@@ -52,8 +57,9 @@ export async function DELETE(request) {
       return NextResponse.json({ success: false, error: 'Course ID is required' }, { status: 400 });
     }
 
-    await deleteCourse(id);
-    const remaining = await getAllCourses();
+    const deleted = await deleteOwnedCourse(id, owner.username);
+    if (!deleted) return NextResponse.json({ success: false, error: 'Course not found or not owned by this account' }, { status: 404 });
+    const remaining = await getAllCourses(owner.username);
 
     return NextResponse.json({ success: true, message: `Course ${id} deleted`, remainingCount: remaining.length });
   } catch (error) {

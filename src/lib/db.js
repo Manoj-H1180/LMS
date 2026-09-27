@@ -15,6 +15,26 @@
 
 import { neon } from '@neondatabase/serverless';
 import crypto from 'node:crypto';
+import { promisify } from 'node:util';
+
+const scrypt = promisify(crypto.scrypt);
+
+export async function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = await scrypt(password, salt, 64);
+  return `scrypt:${salt}:${hash.toString('hex')}`;
+}
+
+export async function verifyPassword(password, storedValue) {
+  if (!storedValue) return false;
+  if (!storedValue.startsWith('scrypt:')) {
+    return storedValue === password || storedValue === Buffer.from(password, 'binary').toString('base64');
+  }
+  const [, salt, hashHex] = storedValue.split(':');
+  const expected = Buffer.from(hashHex, 'hex');
+  const actual = await scrypt(password, salt, expected.length);
+  return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+}
 
 // ---------------------------------------------------------------------------
 // Connection
@@ -77,6 +97,7 @@ export async function ensureTables() {
       total_duration TEXT,
       xp_reward INTEGER DEFAULT 100,
       modules TEXT,
+      owner_username TEXT,
       created_at BIGINT,
       updated_at BIGINT
     )
@@ -113,6 +134,11 @@ export async function ensureTables() {
       updated_at BIGINT
     )
   `;
+
+  await sql`ALTER TABLE course_progress ADD COLUMN IF NOT EXISTS lesson_completed_at TEXT DEFAULT '{}'`;
+  await sql`ALTER TABLE courses ADD COLUMN IF NOT EXISTS owner_username TEXT`;
+  await sql`UPDATE courses SET owner_username = NULL WHERE owner_username = ''`;
+  await sql`CREATE INDEX IF NOT EXISTS courses_owner_username_idx ON courses (owner_username)`;
 }
 
 // ---------------------------------------------------------------------------
@@ -148,6 +174,7 @@ function formatCourseRecord(row) {
   if (!row) return null;
   return {
     id: row.id,
+    ownerUsername: row.owner_username || null,
     title: row.title,
     category: row.category,
     description: row.description,
@@ -183,9 +210,12 @@ function formatProgressRecord(row) {
 // Courses API
 // ---------------------------------------------------------------------------
 
-export async function getAllCourses() {
+export async function getAllCourses(username = null) {
   const sql = getDb();
-  const rows = await sql`SELECT * FROM courses ORDER BY created_at DESC`;
+  const cleanUsername = username?.toLowerCase() || null;
+  const rows = cleanUsername
+    ? await sql`SELECT * FROM courses WHERE owner_username IS NULL OR lower(owner_username) = ${cleanUsername} ORDER BY created_at DESC`
+    : await sql`SELECT * FROM courses WHERE owner_username IS NULL ORDER BY created_at DESC`;
   return rows.map(formatCourseRecord);
 }
 
@@ -195,11 +225,17 @@ export async function getCourseById(id) {
   return formatCourseRecord(rows[0] || null);
 }
 
-export async function upsertCourse(course) {
+export async function deleteOwnedCourse(id, username) {
+  const sql = getDb();
+  const result = await sql`DELETE FROM courses WHERE id = ${id} AND lower(owner_username) = ${username.toLowerCase()} RETURNING id`;
+  return result.length > 0;
+}
+
+export async function upsertCourse(course, ownerUsername = null) {
   const sql = getDb();
   const now = Date.now();
   await sql`
-    INSERT INTO courses (id, title, category, description, icon, banner, author, total_duration, xp_reward, modules, created_at, updated_at)
+    INSERT INTO courses (id, title, category, description, icon, banner, author, total_duration, modules, created_at, updated_at, owner_username, xp_reward)
     VALUES (
       ${course.id},
       ${course.title || 'Untitled Course'},
@@ -211,6 +247,7 @@ export async function upsertCourse(course) {
       ${course.totalDuration || '1h 00m'},
       ${Number(course.xpReward || 100)},
       ${JSON.stringify(course.modules || [])},
+      ${ownerUsername?.toLowerCase() || course.ownerUsername?.toLowerCase() || null},
       ${course.createdAt || now},
       ${now}
     )
@@ -224,6 +261,7 @@ export async function upsertCourse(course) {
       total_duration = EXCLUDED.total_duration,
       xp_reward = EXCLUDED.xp_reward,
       modules = EXCLUDED.modules,
+      owner_username = COALESCE(courses.owner_username, EXCLUDED.owner_username),
       updated_at = EXCLUDED.updated_at
   `;
   return getCourseById(course.id);
@@ -269,6 +307,11 @@ export async function getAccountWithPassword(username) {
   const sql = getDb();
   const rows = await sql`SELECT * FROM users WHERE lower(username) = ${username.toLowerCase()}`;
   return rows[0] || null;
+}
+
+export async function updatePassword(username, passwordHash) {
+  const sql = getDb();
+  await sql`UPDATE users SET password = ${passwordHash}, updated_at = ${Date.now()} WHERE lower(username) = ${username.toLowerCase()}`;
 }
 
 export async function upsertUser(user) {
@@ -331,7 +374,7 @@ export async function upsertUser(user) {
 
 export async function getAllLeaderboardUsers() {
   const sql = getDb();
-  const rows = await sql`SELECT username, name, avatar, title, xp, streak FROM users ORDER BY xp DESC LIMIT 50`;
+  const rows = await sql`SELECT username, name, avatar, title, xp, streak, unlocked_achievements FROM users ORDER BY xp DESC LIMIT 50`;
   return rows.map((u, i) => ({
     rank: i + 1,
     name: u.name || u.username,
@@ -340,6 +383,7 @@ export async function getAllLeaderboardUsers() {
     title: u.title || 'Novice Scholar',
     xp: Number(u.xp || 0),
     streak: Number(u.streak || 0),
+    badges: JSON.parse(u.unlocked_achievements || '[]').length,
     badge: i === 0 ? '👑' : i === 1 ? '🥈' : i === 2 ? '🥉' : '⭐'
   }));
 }
@@ -431,6 +475,24 @@ export async function getAllUserCourseProgress(username) {
   return rows.map(formatProgressRecord);
 }
 
+export async function getWeeklyLessonActivity() {
+  const sql = getDb();
+  const rows = await sql`
+    SELECT username, lesson_completed_at
+    FROM course_progress
+    WHERE updated_at >= ${Date.now() - 7 * 24 * 60 * 60 * 1000}
+  `;
+  const activity = new Map();
+  for (const row of rows) {
+    let timestamps = {};
+    try { timestamps = JSON.parse(row.lesson_completed_at || '{}'); } catch {}
+    const weeklyLessons = Object.values(timestamps).filter(timestamp => Number(timestamp) >= Date.now() - 7 * 24 * 60 * 60 * 1000).length;
+    const username = row.username.toLowerCase();
+    activity.set(username, (activity.get(username) || 0) + weeklyLessons);
+  }
+  return activity;
+}
+
 export async function saveCourseProgress({
   username,
   courseId,
@@ -439,6 +501,7 @@ export async function saveCourseProgress({
   completedLessons = [],
   quizScores = {},
   notes = {},
+  lessonCompletedAt = {},
   progressPercent = 0,
   completed = false
 }) {
@@ -448,28 +511,42 @@ export async function saveCourseProgress({
   const id = `${cleanUsername}_${courseId}`;
   const now = Date.now();
 
+  const previous = await getCourseProgress(cleanUsername, courseId);
+  const mergedCompleted = Array.from(new Set([...(previous?.completedLessons || []), ...(completedLessons || [])]));
+  const mergedScores = { ...(previous?.quizScores || {}), ...(quizScores || {}) };
+  const mergedNotes = { ...(previous?.notes || {}), ...(notes || {}) };
+  const mergedTimestamps = { ...(previous?.lessonCompletedAt || {}), ...(lessonCompletedAt || {}) };
+  const course = await getCourseById(courseId);
+  const allLessons = (course?.modules || []).flatMap(module => module.lessons || []);
+  const lessonMap = new Map(allLessons.map(lesson => [lesson.id, lesson]));
+  const newlyCompleted = mergedCompleted.filter(lessonId => !(previous?.completedLessons || []).includes(lessonId) && lessonMap.has(lessonId));
+  const earnedXP = newlyCompleted.reduce((sum, lessonId) => sum + Number(lessonMap.get(lessonId).xp || (lessonMap.get(lessonId).type === 'quiz' ? 120 : 50)), 0);
+  const mergedPercent = allLessons.length ? Math.round(mergedCompleted.filter(lessonId => lessonMap.has(lessonId)).length / allLessons.length * 100) : Number(progressPercent || 0);
+
   await sql`
     INSERT INTO course_progress (
       id, username, course_id, last_lesson_id, playback_time,
-      completed_lessons, quiz_scores, notes, progress_percent, completed, updated_at
+      completed_lessons, quiz_scores, notes, progress_percent, completed, updated_at, lesson_completed_at
     ) VALUES (
       ${id}, ${cleanUsername}, ${courseId}, ${lastLessonId || null},
       ${Number(playbackTime || 0)},
-      ${JSON.stringify(completedLessons || [])},
-      ${JSON.stringify(quizScores || {})},
-      ${JSON.stringify(notes || {})},
-      ${Number(progressPercent || 0)},
-      ${completed ? 1 : 0},
-      ${now}
+      ${JSON.stringify(mergedCompleted)},
+      ${JSON.stringify(mergedScores)},
+      ${JSON.stringify(mergedNotes)},
+      ${mergedPercent},
+      ${mergedPercent === 100 || completed ? 1 : 0},
+      ${now},
+      ${JSON.stringify(mergedTimestamps)}
     )
     ON CONFLICT (id) DO UPDATE SET
       last_lesson_id = COALESCE(EXCLUDED.last_lesson_id, course_progress.last_lesson_id),
-      playback_time = EXCLUDED.playback_time,
-      completed_lessons = EXCLUDED.completed_lessons,
-      quiz_scores = EXCLUDED.quiz_scores,
-      notes = EXCLUDED.notes,
-      progress_percent = EXCLUDED.progress_percent,
-      completed = EXCLUDED.completed,
+      playback_time = CASE WHEN EXCLUDED.playback_time > 0 THEN EXCLUDED.playback_time ELSE course_progress.playback_time END,
+      completed_lessons = (SELECT COALESCE(json_agg(DISTINCT value), '[]'::json) FROM json_array_elements_text(course_progress.completed_lessons::json || EXCLUDED.completed_lessons::json)),
+      quiz_scores = course_progress.quiz_scores::jsonb || EXCLUDED.quiz_scores::jsonb,
+      notes = course_progress.notes::jsonb || EXCLUDED.notes::jsonb,
+      lesson_completed_at = course_progress.lesson_completed_at::jsonb || EXCLUDED.lesson_completed_at::jsonb,
+      progress_percent = GREATEST(course_progress.progress_percent, EXCLUDED.progress_percent),
+      completed = course_progress.completed OR EXCLUDED.completed,
       updated_at = EXCLUDED.updated_at
   `;
 
@@ -477,14 +554,20 @@ export async function saveCourseProgress({
   try {
     const user = await getUser(cleanUsername);
     if (user) {
-      const mergedCompleted = Array.from(new Set([...(user.completedLessons || []), ...completedLessons]));
-      const mergedScores = { ...(user.quizScores || {}), ...quizScores };
-      const mergedNotes = { ...(user.lessonNotes || {}), ...notes };
+      const mergedUserCompleted = Array.from(new Set([...(user.completedLessons || []), ...newlyCompleted]));
+      const mergedUserScores = { ...(user.quizScores || {}), ...mergedScores };
+      const mergedUserNotes = { ...(user.lessonNotes || {}), ...mergedNotes };
+      const earnedBadges = [...(user.unlockedAchievements || [])];
+      if (mergedPercent === 100 && !earnedBadges.includes('course_graduate')) earnedBadges.push('course_graduate');
+      if (newlyCompleted.some(lessonId => lessonMap.get(lessonId)?.type === 'quiz' && Number(mergedScores[lessonId]) === 100) && !earnedBadges.includes('quiz_master')) earnedBadges.push('quiz_master');
       await upsertUser({
         ...user,
-        completedLessons: mergedCompleted,
-        quizScores: mergedScores,
-        lessonNotes: mergedNotes
+        xp: Number(user.xp || 0) + earnedXP,
+        coins: Number(user.coins || 0) + Math.round(earnedXP / 2),
+        completedLessons: mergedUserCompleted,
+        quizScores: mergedUserScores,
+        lessonNotes: mergedUserNotes,
+        unlockedAchievements: earnedBadges
       });
     }
   } catch (err) {
@@ -492,4 +575,27 @@ export async function saveCourseProgress({
   }
 
   return getCourseProgress(cleanUsername, courseId);
+}
+
+export async function saveAuthenticatedUserUpdates(username, updates) {
+  const existing = await getUser(username);
+  if (!existing) return null;
+  const sql = getDb();
+  const safeUpdates = {
+    name: typeof updates.name === 'string' ? updates.name.trim().slice(0, 60) || existing.name : existing.name,
+    avatar: typeof updates.avatar === 'string' ? updates.avatar.slice(0, 16) : existing.avatar,
+    inventory: Array.isArray(updates.inventory) ? updates.inventory : existing.inventory,
+    activeTheme: typeof updates.activeTheme === 'string' ? updates.activeTheme : existing.activeTheme,
+    title: typeof updates.title === 'string' ? updates.title.slice(0, 60) : existing.title,
+    streakFrozen: Boolean(updates.streakFrozen),
+    soundEnabled: updates.soundEnabled !== false,
+  };
+  await sql`
+    UPDATE users SET name = ${safeUpdates.name}, avatar = ${safeUpdates.avatar},
+      inventory = ${JSON.stringify(safeUpdates.inventory)}, active_theme = ${safeUpdates.activeTheme},
+      title = ${safeUpdates.title}, streak_frozen = ${safeUpdates.streakFrozen ? 1 : 0},
+      sound_enabled = ${safeUpdates.soundEnabled ? 1 : 0}, updated_at = ${Date.now()}
+    WHERE lower(username) = ${username.toLowerCase()}
+  `;
+  return getUser(username);
 }

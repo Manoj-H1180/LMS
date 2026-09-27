@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { 
+import {
   ArrowLeft, 
   CheckCircle2, 
   Circle, 
@@ -14,13 +14,20 @@ import {
   ChevronDown, 
   Sparkles, 
   BookOpen, 
-  RotateCcw, 
+  RotateCcw as RetakeQuiz, 
   Check, 
   HelpCircle,
   FileCheck,
   Edit3,
   Save,
-  Maximize2
+  Maximize2,
+  Volume2,
+  VolumeX,
+  Pause,
+  Minimize2,
+  RotateCcw,
+  RotateCw,
+  AlertCircle
 } from 'lucide-react';
 import { soundFX } from '../../utils/soundEffects';
 import { triggerConfetti } from '../../utils/confettiHelper';
@@ -34,41 +41,100 @@ export default function CoursePlayerView({
   onBack 
 }) {
   // Flatten all lessons for navigation
-  const allLessons = [];
-  course.modules?.forEach((mod, mIdx) => {
-    mod.lessons?.forEach((les, lIdx) => {
-      allLessons.push({
-        ...les,
-        moduleTitle: mod.title,
-        moduleIndex: mIdx,
-        lessonIndex: lIdx
-      });
-    });
-  });
+  const allLessons = (course.modules || []).flatMap((mod, moduleIndex) =>
+    (mod.lessons || []).map((lesson, lessonIndex) => ({
+      ...lesson,
+      moduleTitle: mod.title,
+      moduleIndex,
+      lessonIndex
+    }))
+  );
 
-  const [currentLessonId, setCurrentLessonId] = useState(allLessons[0]?.id || '');
+  const [currentLessonId, setCurrentLessonId] = useState(() => allLessons[0]?.id || '');
   const [showCertificate, setShowCertificate] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
   const [currentNote, setCurrentNote] = useState('');
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
+  const [videoState, setVideoState] = useState({ currentTime: 0, duration: 0, paused: true, volume: 1, muted: false, buffered: 0, error: '' });
   const [expandedModules, setExpandedModules] = useState({ 0: true, 1: true });
+  const [mobileTab, setMobileTab] = useState('lesson'); // 'lesson' | 'syllabus'
 
   // Interactive Quiz State
   const [quizAnswers, setQuizAnswers] = useState({});
   const [quizSubmitted, setQuizSubmitted] = useState(false);
   const [quizScore, setQuizScore] = useState(0);
+  const [restoreProgress, setRestoreProgress] = useState(null);
 
   const videoRef = useRef(null);
   const savedPlaybackTimeRef = useRef(0);
+  const hydratedProgressCourseRef = useRef(null);
+  const notesTimerRef = useRef(null);
+  const playerShellRef = useRef(null);
+
+  const formatTime = (seconds) => {
+    if (!Number.isFinite(seconds)) return '0:00';
+    const total = Math.floor(seconds);
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    const remainder = total % 60;
+    return hours > 0 ? `${hours}:${String(minutes).padStart(2, '0')}:${String(remainder).padStart(2, '0')}` : `${minutes}:${String(remainder).padStart(2, '0')}`;
+  };
+
+  const toggleVideoPlayback = () => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (video.paused) video.play().catch(() => setVideoState(state => ({ ...state, error: 'Playback could not start. Check that the video URL is accessible.' })));
+    else video.pause();
+  };
+
+  const seekVideo = (offset) => {
+    const video = videoRef.current;
+    if (!video || !Number.isFinite(video.duration)) return;
+    video.currentTime = Math.max(0, Math.min(video.duration, video.currentTime + offset));
+  };
+
+  const toggleFullscreen = async () => {
+    const shell = playerShellRef.current;
+    if (!shell) return;
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await shell.requestFullscreen();
+    } catch {
+      setVideoState(state => ({ ...state, error: 'Fullscreen is not available in this browser.' }));
+    }
+  };
+
+  useEffect(() => {
+    const handleKeys = (event) => {
+      if (event.target instanceof HTMLElement && ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(event.target.tagName)) return;
+      if (videoRef.current?.paused === undefined) return;
+      if (event.code === 'Space' || event.code === 'KeyK') { event.preventDefault(); toggleVideoPlayback(); }
+      else if (event.code === 'ArrowLeft') { event.preventDefault(); seekVideo(-10); }
+      else if (event.code === 'ArrowRight') { event.preventDefault(); seekVideo(10); }
+      else if (event.code === 'KeyM' && videoRef.current) { videoRef.current.muted = !videoRef.current.muted; setVideoState(state => ({ ...state, muted: videoRef.current.muted })); }
+      else if (event.code === 'KeyF') toggleFullscreen();
+    };
+    window.addEventListener('keydown', handleKeys);
+    return () => window.removeEventListener('keydown', handleKeys);
+  }, []);
+
+  useEffect(() => {
+    const syncFullscreen = () => setVideoState(state => ({ ...state, fullscreen: Boolean(document.fullscreenElement) }));
+    document.addEventListener('fullscreenchange', syncFullscreen);
+    return () => document.removeEventListener('fullscreenchange', syncFullscreen);
+  }, []);
 
   // Hydrate course progress from SQLite on disk
   useEffect(() => {
-    if (!course?.id) return;
+    if (!course?.id || hydratedProgressCourseRef.current === course.id) return;
+    hydratedProgressCourseRef.current = course.id;
     fetchCourseProgressFromDisk(course.id, user.username).then(progress => {
+      if (hydratedProgressCourseRef.current !== course.id || !progress) return;
       if (progress) {
         if (progress.lastLessonId && allLessons.some(l => l.id === progress.lastLessonId)) {
           setCurrentLessonId(progress.lastLessonId);
         }
+        setRestoreProgress(progress);
         if (progress.playbackTime > 0) {
           savedPlaybackTimeRef.current = progress.playbackTime;
           if (videoRef.current) {
@@ -76,19 +142,24 @@ export default function CoursePlayerView({
           }
         }
         if (Array.isArray(progress.completedLessons) && progress.completedLessons.length > 0) {
-          const mergedCompleted = Array.from(new Set([...(user.completedLessons || []), ...progress.completedLessons]));
+    const mergedCompleted = Array.from(new Set([...(user.completedLessons || []), ...progress.completedLessons]));
           const mergedScores = { ...(user.quizScores || {}), ...(progress.quizScores || {}) };
-          const mergedNotes = { ...(user.lessonNotes || {}), ...(progress.notes || {}) };
+    const mergedNotes = { ...(user.lessonNotes || {}), ...(progress.notes || {}) };
+    const mergedLessonCompletedAt = { ...(user.lessonCompletedAt || {}), ...(progress.lessonCompletedAt || {}) };
           onUpdateUser({
             ...user,
-            completedLessons: mergedCompleted,
+      completedLessons: mergedCompleted,
+      lessonCompletedAt: mergedLessonCompletedAt,
             quizScores: mergedScores,
             lessonNotes: mergedNotes
           });
         }
+        if (progress.lastLessonId && !allLessons.some(lesson => lesson.id === progress.lastLessonId)) {
+          setCurrentLessonId(allLessons[0]?.id || '');
+        }
       }
     });
-  }, [course?.id]);
+  }, [course?.id, user.username, allLessons, onUpdateUser, user]);
 
   const currentLesson = allLessons.find(l => l.id === currentLessonId) || allLessons[0];
   const currentIndex = allLessons.findIndex(l => l.id === currentLessonId);
@@ -102,24 +173,26 @@ export default function CoursePlayerView({
 
   // Load lesson note when lesson changes
   useEffect(() => {
-    if (currentLesson) {
-      setCurrentNote(user.lessonNotes?.[currentLesson.id] || '');
-      setQuizAnswers({});
-      setQuizSubmitted(false);
-      setQuizScore(0);
-    }
-  }, [currentLessonId]);
+    setCurrentNote(user.lessonNotes?.[currentLessonId] || '');
+    setQuizAnswers({});
+    setQuizSubmitted(false);
+    setQuizScore(0);
+  }, [currentLessonId, user.lessonNotes]);
 
   // Set video speed and restore playback position
   useEffect(() => {
     if (videoRef.current) {
       videoRef.current.playbackRate = playbackSpeed;
-      if (savedPlaybackTimeRef.current > 0) {
+      if (restoreProgress?.lastLessonId === currentLessonId && restoreProgress.playbackTime > 0) {
+        videoRef.current.currentTime = restoreProgress.playbackTime;
+        setRestoreProgress(null);
+        savedPlaybackTimeRef.current = restoreProgress.playbackTime;
+      } else if (savedPlaybackTimeRef.current > 0) {
         videoRef.current.currentTime = savedPlaybackTimeRef.current;
         savedPlaybackTimeRef.current = 0;
       }
     }
-  }, [playbackSpeed, currentLessonId]);
+  }, [playbackSpeed, currentLessonId, restoreProgress]);
 
   // Toggle Module in Sidebar
   const toggleModule = (idx) => {
@@ -131,11 +204,13 @@ export default function CoursePlayerView({
   const selectLesson = (lessonId) => {
     soundFX.playClick();
     setCurrentLessonId(lessonId);
+    setMobileTab('lesson'); // auto switch to lesson viewer on mobile devices
     saveCourseProgressToDisk({
       courseId: course.id,
       username: user.username,
       lastLessonId: lessonId,
       completedLessons: user.completedLessons || [],
+      lessonCompletedAt: user.lessonCompletedAt || {},
       quizScores: user.quizScores || {},
       notes: user.lessonNotes || {},
       progressPercent,
@@ -147,9 +222,8 @@ export default function CoursePlayerView({
   const handleCompleteLesson = () => {
     if (!currentLesson) return;
 
-    const earnedXP = currentLesson.xp || 50;
-    const earnedCoins = Math.round(earnedXP / 2);
     const updatedCompleted = Array.from(new Set([...(user.completedLessons || []), currentLesson.id]));
+    const updatedLessonCompletedAt = { ...(user.lessonCompletedAt || {}), [currentLesson.id]: user.lessonCompletedAt?.[currentLesson.id] || Date.now() };
     const willCompleteCourse = allLessons.every(l => updatedCompleted.includes(l.id));
     const newPercent = totalLessonsCount > 0 ? Math.round((allLessons.filter(l => updatedCompleted.includes(l.id)).length / totalLessonsCount) * 100) : 0;
 
@@ -162,15 +236,7 @@ export default function CoursePlayerView({
         triggerConfetti.cannon();
       }
 
-      onUpdateUser({
-        ...user,
-        xp: user.xp + earnedXP,
-        coins: user.coins + earnedCoins,
-        completedLessons: updatedCompleted,
-        unlockedAchievements: willCompleteCourse && !user.unlockedAchievements?.includes('course_graduate')
-          ? [...(user.unlockedAchievements || []), 'course_graduate']
-          : (user.unlockedAchievements || [])
-      });
+      onUpdateUser({ ...user, completedLessons: updatedCompleted, lessonCompletedAt: updatedLessonCompletedAt });
     }
 
     // Auto-advance to next lesson if available
@@ -186,6 +252,7 @@ export default function CoursePlayerView({
       username: user.username,
       lastLessonId: nextLessonId,
       completedLessons: updatedCompleted,
+      lessonCompletedAt: updatedLessonCompletedAt,
       progressPercent: newPercent,
       completed: willCompleteCourse,
       notes: user.lessonNotes || {},
@@ -204,10 +271,11 @@ export default function CoursePlayerView({
   const handleSubmitQuiz = () => {
     if (!currentLesson.quiz?.questions) return;
     const questions = currentLesson.quiz.questions;
+    if (questions.length === 0) return;
     let correct = 0;
 
     questions.forEach(q => {
-      if (quizAnswers[q.id] === q.correctAnswer) {
+      if (quizAnswers[q.id ?? questions.indexOf(q)] === q.correctAnswer) {
         correct++;
       }
     });
@@ -227,23 +295,12 @@ export default function CoursePlayerView({
 
       // Mark quiz lesson completed
       const updatedCompleted = Array.from(new Set([...(user.completedLessons || []), currentLesson.id]));
+      const updatedLessonCompletedAt = { ...(user.lessonCompletedAt || {}), [currentLesson.id]: user.lessonCompletedAt?.[currentLesson.id] || Date.now() };
       const updatedScores = { ...(user.quizScores || {}), [currentLesson.id]: percent };
       const willCompleteCourse = allLessons.every(l => updatedCompleted.includes(l.id));
       const newPercent = totalLessonsCount > 0 ? Math.round((allLessons.filter(l => updatedCompleted.includes(l.id)).length / totalLessonsCount) * 100) : 0;
 
-      if (!isLessonCompleted) {
-        const earnedXP = currentLesson.xp || 120;
-        onUpdateUser({
-          ...user,
-          xp: user.xp + earnedXP,
-          coins: user.coins + 60,
-          completedLessons: updatedCompleted,
-          quizScores: updatedScores,
-          unlockedAchievements: percent === 100 && !user.unlockedAchievements?.includes('quiz_master')
-            ? [...(user.unlockedAchievements || []), 'quiz_master']
-            : (user.unlockedAchievements || [])
-        });
-      }
+      onUpdateUser({ ...user, completedLessons: updatedCompleted, lessonCompletedAt: updatedLessonCompletedAt, quizScores: updatedScores });
 
       // Save to SQLite on disk
       saveCourseProgressToDisk({
@@ -251,6 +308,7 @@ export default function CoursePlayerView({
         username: user.username,
         lastLessonId: currentLesson.id,
         completedLessons: updatedCompleted,
+        lessonCompletedAt: updatedLessonCompletedAt,
         quizScores: updatedScores,
         notes: user.lessonNotes || {},
         progressPercent: newPercent,
@@ -275,6 +333,7 @@ export default function CoursePlayerView({
       lastLessonId: currentLesson.id,
       notes: updatedNotes,
       completedLessons: user.completedLessons || [],
+      lessonCompletedAt: user.lessonCompletedAt || {},
       quizScores: user.quizScores || {},
       progressPercent,
       completed: isCourseFullyCompleted
@@ -289,51 +348,61 @@ export default function CoursePlayerView({
     });
   };
 
+  useEffect(() => {
+    if (!currentLesson || currentNote === (user.lessonNotes?.[currentLesson.id] || '')) return;
+    window.clearTimeout(notesTimerRef.current);
+    notesTimerRef.current = window.setTimeout(() => {
+      const updatedNotes = { ...(user.lessonNotes || {}), [currentLesson.id]: currentNote };
+      onUpdateUser({ ...user, lessonNotes: updatedNotes });
+      saveCourseProgressToDisk({
+        courseId: course.id,
+        lastLessonId: currentLesson.id,
+        completedLessons: user.completedLessons || [],
+        lessonCompletedAt: user.lessonCompletedAt || {},
+        quizScores: user.quizScores || {},
+        notes: updatedNotes,
+        progressPercent,
+        completed: isCourseFullyCompleted
+      });
+    }, 700);
+    return () => window.clearTimeout(notesTimerRef.current);
+  }, [currentNote, currentLesson, user, course.id, onUpdateUser, progressPercent, isCourseFullyCompleted]);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 'calc(100vh - 72px)' }}>
       {/* Top Learning Bar */}
-      <div style={{
-        padding: '14px 24px',
-        background: 'var(--bg-glass-heavy)',
-        backdropFilter: 'blur(16px)',
-        borderBottom: '1px solid var(--border-subtle)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        position: 'sticky',
-        top: 0,
-        zIndex: 30
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+      <div className="course-player-topbar">
+        <div className="course-player-topbar-left">
           <button 
             onClick={onBack}
-            className="ghost-btn"
-            style={{ padding: '8px 12px', fontSize: '0.85rem' }}
+            className="ghost-btn course-player-back-btn"
           >
             <ArrowLeft size={16} />
-            Back to Dashboard
+            <span className="back-btn-text">Back to Dashboard</span>
           </button>
 
-          <div style={{ height: '24px', width: '1px', background: 'var(--border-subtle)' }} />
+          <div className="course-player-divider" />
 
           <div>
             <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
               {course.category} • {course.level}
             </div>
-            <h2 style={{ fontSize: '1.1rem', color: '#fff' }}>
+            <h2 className="course-player-title">
               {course.title}
             </h2>
           </div>
         </div>
 
         {/* Progress & Certificate Button */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '3px' }}>
+        <div className="course-player-topbar-right">
+          <div className="course-player-progress-pill">
             <div style={{ fontSize: '0.75rem', fontWeight: '700', color: isCourseFullyCompleted ? '#34d399' : 'var(--text-muted)' }}>
-              {isCourseFullyCompleted ? 'Course Completed!' : `${completedInCourseCount} of ${totalLessonsCount} Completed (${progressPercent}%)`}
+              {isCourseFullyCompleted ? 'Completed!' : `${completedInCourseCount}/${totalLessonsCount} (${progressPercent}%)`}
             </div>
-            <div className="xp-track" style={{ width: '140px', height: '6px' }}>
-              <div 
+            <div className="xp-track" style={{ width: '110px', height: '6px' }}>
+                              <button type="button"
+                              aria-pressed={isOptionSelected}
+                              disabled={quizSubmitted}
                 style={{ 
                   height: '100%', 
                   width: `${progressPercent}%`, 
@@ -347,11 +416,11 @@ export default function CoursePlayerView({
           <button
             onClick={() => { soundFX.playClick(); setShowCertificate(true); }}
             className={isCourseFullyCompleted ? 'glow-btn' : 'ghost-btn'}
-            style={{ padding: '8px 14px', fontSize: '0.85rem' }}
+            style={{ padding: '8px 12px', fontSize: '0.85rem' }}
             title={isCourseFullyCompleted ? 'View & Download Diploma' : 'Preview Course Certificate'}
           >
             <Award size={16} color={isCourseFullyCompleted ? '#fff' : '#fbbf24'} />
-            Diploma
+            <span className="diploma-btn-text">Diploma</span>
           </button>
 
           <button
@@ -365,18 +434,28 @@ export default function CoursePlayerView({
         </div>
       </div>
 
+      {/* Mobile Tab Switcher: Lesson vs Syllabus */}
+      <div className="course-player-mobile-tabs">
+        <button
+          onClick={() => { soundFX.playClick(); setMobileTab('lesson'); }}
+          className={`course-player-tab-btn ${mobileTab === 'lesson' ? 'active' : ''}`}
+        >
+          <Video size={16} />
+          <span>Current Lesson</span>
+        </button>
+        <button
+          onClick={() => { soundFX.playClick(); setMobileTab('syllabus'); }}
+          className={`course-player-tab-btn ${mobileTab === 'syllabus' ? 'active' : ''}`}
+        >
+          <BookOpen size={16} />
+          <span>Syllabus ({completedInCourseCount}/{totalLessonsCount})</span>
+        </button>
+      </div>
+
       {/* Main Learning Grid: Syllabus Sidebar + Player Content */}
-      <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
+      <div className="course-player-grid">
         {/* Left Lesson Drawer */}
-        <aside style={{
-          width: '320px',
-          background: 'var(--bg-secondary)',
-          borderRight: '1px solid var(--border-subtle)',
-          overflowY: 'auto',
-          flexShrink: 0,
-          display: 'flex',
-          flexDirection: 'column'
-        }}>
+        <aside className={`course-player-syllabus ${mobileTab === 'syllabus' ? 'mobile-active' : ''}`}>
           <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border-subtle)' }}>
             <h3 style={{ fontSize: '0.95rem', color: '#fff', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <BookOpen size={16} color="var(--accent-primary)" />
@@ -487,9 +566,9 @@ export default function CoursePlayerView({
         </aside>
 
         {/* Center Learner Workspace */}
-        <main style={{ flex: 1, padding: '28px 36px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '24px' }}>
+        <main className={`course-player-workspace ${mobileTab === 'lesson' ? 'mobile-active' : ''}`}>
           {/* Lesson Header */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '16px' }}>
+          <div className="course-player-lesson-header">
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
                 <span className="badge-pill" style={{
@@ -525,85 +604,77 @@ export default function CoursePlayerView({
 
           {/* Video Player (if type === 'video') */}
           {currentLesson?.type === 'video' && (
-            <div style={{
-              background: '#000',
-              borderRadius: 'var(--radius-lg)',
-              overflow: 'hidden',
-              boxShadow: 'var(--shadow-lg)',
-              position: 'relative'
-            }}>
+            <section ref={playerShellRef} className="video-player-shell" aria-label={`Video lesson: ${currentLesson.title}`}>
               <video
+                key={currentLesson.id}
                 ref={videoRef}
                 src={currentLesson.videoUrl || 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4'}
-                controls
-                style={{ width: '100%', maxHeight: '520px', display: 'block', backgroundColor: '#000' }}
+                preload="metadata"
+                playsInline
+                aria-label={currentLesson.title}
+                onLoadedMetadata={event => setVideoState(state => ({ ...state, duration: event.currentTarget.duration, currentTime: event.currentTarget.currentTime, error: '' }))}
+                onDurationChange={event => setVideoState(state => ({ ...state, duration: event.currentTarget.duration }))}
+                onTimeUpdate={event => {
+                  const video = event.currentTarget;
+                  const sec = Math.floor(video.currentTime);
+                  setVideoState(state => ({ ...state, currentTime: video.currentTime, buffered: video.buffered.length ? video.buffered.end(video.buffered.length - 1) : 0 }));
+                  if (sec > 0 && sec % 10 === 0 && savedPlaybackTimeRef.current !== sec) {
+                    savedPlaybackTimeRef.current = sec;
+                    saveCourseProgressToDisk({ courseId: course.id, lastLessonId: currentLesson.id, playbackTime: sec, completedLessons: user.completedLessons || [], lessonCompletedAt: user.lessonCompletedAt || {}, quizScores: user.quizScores || {}, notes: user.lessonNotes || {}, progressPercent, completed: isCourseFullyCompleted });
+                  }
+                }}
+                onPlay={() => setVideoState(state => ({ ...state, paused: false, error: '' }))}
+                onPause={event => {
+                  const video = event.currentTarget;
+                  setVideoState(state => ({ ...state, paused: true, currentTime: video.currentTime }));
+                  saveCourseProgressToDisk({ courseId: course.id, lastLessonId: currentLesson.id, playbackTime: Math.floor(video.currentTime), completedLessons: user.completedLessons || [], lessonCompletedAt: user.lessonCompletedAt || {}, quizScores: user.quizScores || {}, notes: user.lessonNotes || {}, progressPercent, completed: isCourseFullyCompleted });
+                }}
+                onVolumeChange={event => setVideoState(state => ({ ...state, volume: event.currentTarget.volume, muted: event.currentTarget.muted }))}
+                onError={() => setVideoState(state => ({ ...state, error: 'This video could not be loaded. Check the lesson URL and your connection, then try again.' }))}
                 onEnded={handleCompleteLesson}
-                onPause={() => {
-                  if (videoRef.current && currentLesson) {
-                    saveCourseProgressToDisk({
-                      courseId: course.id,
-                      username: user.username,
-                      lastLessonId: currentLesson.id,
-                      playbackTime: Math.floor(videoRef.current.currentTime),
-                      completedLessons: user.completedLessons || [],
-                      progressPercent,
-                      completed: isCourseFullyCompleted
-                    });
-                  }
-                }}
-                onTimeUpdate={() => {
-                  if (videoRef.current && currentLesson) {
-                    const sec = Math.floor(videoRef.current.currentTime);
-                    if (sec > 0 && sec % 10 === 0 && savedPlaybackTimeRef.current !== sec) {
-                      savedPlaybackTimeRef.current = sec;
-                      saveCourseProgressToDisk({
-                        courseId: course.id,
-                        username: user.username,
-                        lastLessonId: currentLesson.id,
-                        playbackTime: sec,
-                        completedLessons: user.completedLessons || [],
-                        progressPercent,
-                        completed: isCourseFullyCompleted
-                      });
-                    }
-                  }
-                }}
+                className="video-player-media"
               />
-
-              {/* Video Speed Controls Overlay */}
-              <div style={{
-                padding: '10px 16px',
-                background: 'rgba(15, 20, 34, 0.9)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                borderTop: '1px solid var(--border-subtle)'
-              }}>
-                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                  Playback Speed:
-                </span>
-                <div style={{ display: 'flex', gap: '6px' }}>
-                  {[0.75, 1, 1.25, 1.5, 2].map(speed => (
-                    <button
-                      key={speed}
-                      onClick={() => setPlaybackSpeed(speed)}
-                      style={{
-                        padding: '4px 10px',
-                        borderRadius: 'var(--radius-sm)',
-                        background: playbackSpeed === speed ? 'var(--accent-primary)' : 'rgba(255, 255, 255, 0.06)',
-                        border: 'none',
-                        color: '#fff',
-                        fontSize: '0.75rem',
-                        fontWeight: '700',
-                        cursor: 'pointer'
-                      }}
-                    >
-                      {speed}x
+              {videoState.error && <div className="video-player-error" role="alert"><AlertCircle size={18} />{videoState.error}</div>}
+              <div className="video-player-controls">
+                <input
+                  className="video-player-timeline"
+                  type="range"
+                  min="0"
+                  max={videoState.duration || 0}
+                  step="0.1"
+                  value={Math.min(videoState.currentTime, videoState.duration || 0)}
+                  aria-label="Video position"
+                  style={{ '--video-progress': `${videoState.duration ? videoState.currentTime / videoState.duration * 100 : 0}%`, '--video-buffer': `${videoState.duration ? videoState.buffered / videoState.duration * 100 : 0}%` }}
+                  onChange={event => { if (videoRef.current) videoRef.current.currentTime = Number(event.target.value); }}
+                  disabled={!videoState.duration}
+                />
+                <div className="video-player-control-row">
+                  <div className="video-player-control-group">
+                    <button className="video-control-button" onClick={toggleVideoPlayback} aria-label={videoState.paused ? 'Play video' : 'Pause video'} title="Play/Pause (Space)">
+                      {videoState.paused ? <Play size={19} fill="currentColor" /> : <Pause size={19} fill="currentColor" />}
                     </button>
-                  ))}
+                    <button className="video-control-button video-skip-button" onClick={() => seekVideo(-10)} aria-label="Back 10 seconds" title="Back 10 seconds (←)"><RotateCcw size={17} /><span>10</span></button>
+                    <button className="video-control-button video-skip-button" onClick={() => seekVideo(10)} aria-label="Forward 10 seconds" title="Forward 10 seconds (→)"><RotateCw size={17} /><span>10</span></button>
+                    <button className="video-control-button" onClick={() => { if (!videoRef.current) return; videoRef.current.muted = !videoRef.current.muted; }} aria-label={videoState.muted ? 'Unmute video' : 'Mute video'} title="Mute (M)">
+                      {videoState.muted || videoState.volume === 0 ? <VolumeX size={18} /> : <Volume2 size={18} />}
+                    </button>
+                    <input className="video-player-volume" type="range" min="0" max="1" step="0.05" value={videoState.muted ? 0 : videoState.volume} aria-label="Volume" onChange={event => { if (videoRef.current) { videoRef.current.volume = Number(event.target.value); videoRef.current.muted = Number(event.target.value) === 0; } }} />
+                    <span className="video-player-time">{formatTime(videoState.currentTime)} <span>/</span> {formatTime(videoState.duration)}</span>
+                  </div>
+                  <div className="video-player-control-group">
+                    <label className="video-speed-label">Speed
+                      <select className="video-player-speed" value={playbackSpeed} onChange={event => setPlaybackSpeed(Number(event.target.value))} aria-label="Playback speed">
+                        {[0.5, 0.75, 1, 1.25, 1.5, 1.75, 2].map(speed => <option key={speed} value={speed}>{speed}×</option>)}
+                      </select>
+                    </label>
+                    <button className="video-control-button" onClick={toggleFullscreen} aria-label={videoState.fullscreen ? 'Exit fullscreen' : 'Enter fullscreen'} title="Fullscreen (F)">
+                      {videoState.fullscreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
+              <div className="video-player-shortcuts" aria-hidden="true">SPACE Play/Pause <span>← / → Seek 10s</span> M Mute <span>F Fullscreen</span></div>
+            </section>
           )}
 
           {/* Interactive Quiz Engine (if type === 'quiz') */}
@@ -615,7 +686,7 @@ export default function CoursePlayerView({
                     {currentLesson.quiz.title}
                   </h3>
                   <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: '4px' }}>
-                    Passing Score: {currentLesson.quiz.passingScore || 70}% • Earn +{currentLesson.xp} XP upon passing
+                    Passing Score: {currentLesson.quiz.passingScore || 70}% • Earn {currentLesson.xp || 120} XP upon first pass
                   </p>
                 </div>
 
@@ -637,7 +708,8 @@ export default function CoursePlayerView({
               {/* Questions List */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
                 {currentLesson.quiz.questions.map((q, qIdx) => {
-                  const selected = quizAnswers[q.id];
+                  const questionId = q.id ?? qIdx;
+                  const selected = quizAnswers[questionId];
                   const isCorrect = selected === q.correctAnswer;
 
                   return (
@@ -678,11 +750,19 @@ export default function CoursePlayerView({
                           }
 
                           return (
-                            <div
+                            <button
+                              type="button"
                               key={optIdx}
-                              onClick={() => handleSelectQuizOption(q.id, optIdx)}
+                              onClick={() => handleSelectQuizOption(questionId, optIdx)}
+                              disabled={quizSubmitted}
+                              aria-pressed={isOptionSelected}
                               style={{
                                 padding: '12px 16px',
+                                textAlign: 'left',
+                                width: '100%',
+                                color: '#fff',
+                                font: 'inherit',
+                                opacity: quizSubmitted ? 0.9 : 1,
                                 borderRadius: 'var(--radius-md)',
                                 background: optBg,
                                 border: `1px solid ${optBorder}`,
@@ -710,7 +790,7 @@ export default function CoursePlayerView({
                               <span style={{ fontSize: '0.9rem', color: '#fff' }}>
                                 {opt}
                               </span>
-                            </div>
+                            </button>
                           );
                         })}
                       </div>
@@ -743,13 +823,13 @@ export default function CoursePlayerView({
                     }}
                     className="ghost-btn"
                   >
-                    <RotateCcw size={16} />
+                    <RetakeQuiz size={16} />
                     Retake Quiz
                   </button>
                 ) : (
                   <button
                     onClick={handleSubmitQuiz}
-                    disabled={Object.keys(quizAnswers).length < currentLesson.quiz.questions.length}
+                    disabled={Object.keys(quizAnswers).length < currentLesson.quiz.questions.length || currentLesson.quiz.questions.length === 0}
                     className="glow-btn"
                     style={{
                       opacity: Object.keys(quizAnswers).length < currentLesson.quiz.questions.length ? 0.5 : 1,
@@ -841,7 +921,7 @@ export default function CoursePlayerView({
             </div>
 
             <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-              Notes are saved specifically for this lesson and persist in your browser storage.
+              Notes save automatically and stay linked to this lesson.
             </p>
 
             <textarea
