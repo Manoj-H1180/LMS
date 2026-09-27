@@ -250,6 +250,15 @@ export async function deleteOwnedCourse(id, username) {
 export async function upsertCourse(course, ownerUsername = null) {
   const sql = getDb();
   const now = Date.now();
+  const persistentModules = (Array.isArray(course.modules) ? course.modules : []).map(module => ({
+    ...module,
+    lessons: (Array.isArray(module.lessons) ? module.lessons : []).map(lesson => ({
+      ...lesson,
+      // Blob URLs only exist in the importing browser session and cannot be
+      // restored on another visit. Keep local media metadata, not dead URLs.
+      videoUrl: typeof lesson.videoUrl === 'string' && lesson.videoUrl.startsWith('blob:') ? '' : lesson.videoUrl,
+    })),
+  }));
   await sql`
     INSERT INTO courses (id, title, category, description, icon, banner, author, total_duration, modules, created_at, updated_at, owner_username, xp_reward)
     VALUES (
@@ -261,8 +270,8 @@ export async function upsertCourse(course, ownerUsername = null) {
       ${course.banner || ''},
       ${course.author || 'Instructor'},
       ${course.totalDuration || '1h 00m'},
-      ${Number(course.xpReward || 100)},
-      ${JSON.stringify(course.modules || [])},
+      ${JSON.stringify(persistentModules)},
+      ${Number(course.xpReward || course.totalXP || 100)},
       ${ownerUsername?.toLowerCase() || course.ownerUsername?.toLowerCase() || null},
       ${course.createdAt || now},
       ${now}
