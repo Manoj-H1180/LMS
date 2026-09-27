@@ -46,6 +46,21 @@ export default function CoursePlayerView({
   const allLessons = courseModules.flatMap((mod, moduleIndex) =>
     (Array.isArray(mod.lessons) ? mod.lessons : []).filter(Boolean).map((lesson, lessonIndex) => ({
       ...lesson,
+      id: lesson.id ?? `lesson-${moduleIndex}-${lessonIndex}`,
+      title: typeof lesson.title === 'string' && lesson.title.trim() ? lesson.title : `Lesson ${lessonIndex + 1}`,
+      contentMarkdown: typeof lesson.contentMarkdown === 'string' ? lesson.contentMarkdown : '',
+      quiz: lesson.quiz && typeof lesson.quiz === 'object' ? {
+        ...lesson.quiz,
+        questions: Array.isArray(lesson.quiz.questions)
+          ? lesson.quiz.questions.filter(question => question && typeof question === 'object').map((question, questionIndex) => ({
+              ...question,
+              id: question.id ?? `question-${questionIndex}`,
+              question: typeof question.question === 'string' ? question.question : 'Question text is unavailable',
+              options: Array.isArray(question.options) ? question.options.map(option => typeof option === 'string' ? option : String(option ?? '')) : [],
+              correctAnswer: Number.isInteger(question.correctAnswer) ? question.correctAnswer : -1
+            }))
+          : []
+      } : null,
       moduleTitle: mod.title,
       moduleIndex,
       lessonIndex
@@ -773,7 +788,7 @@ export default function CoursePlayerView({
 
               {/* Questions List */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-                {currentLesson.quiz.questions.map((q, qIdx) => {
+                {(Array.isArray(currentLesson.quiz.questions) ? currentLesson.quiz.questions : []).map((q, qIdx) => {
                   const questionId = q.id ?? qIdx;
                   const selected = quizAnswers[questionId];
                   const isCorrect = selected === q.correctAnswer;
@@ -797,7 +812,7 @@ export default function CoursePlayerView({
 
                       {/* Options */}
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                        {q.options.map((opt, optIdx) => {
+                        {(Array.isArray(q.options) ? q.options : []).map((opt, optIdx) => {
                           const isOptionSelected = selected === optIdx;
                           let optBg = 'rgba(255, 255, 255, 0.03)';
                           let optBorder = 'var(--border-subtle)';
@@ -895,11 +910,11 @@ export default function CoursePlayerView({
                 ) : (
                   <button
                     onClick={handleSubmitQuiz}
-                    disabled={Object.keys(quizAnswers).length < currentLesson.quiz.questions.length || currentLesson.quiz.questions.length === 0}
+                    disabled={Object.keys(quizAnswers).length < (Array.isArray(currentLesson.quiz.questions) ? currentLesson.quiz.questions.length : 0) || !currentLesson.quiz.questions?.length}
                     className="glow-btn"
                     style={{
-                      opacity: Object.keys(quizAnswers).length < currentLesson.quiz.questions.length ? 0.5 : 1,
-                      cursor: Object.keys(quizAnswers).length < currentLesson.quiz.questions.length ? 'not-allowed' : 'pointer'
+                      opacity: Object.keys(quizAnswers).length < (currentLesson.quiz.questions?.length || 0) ? 0.5 : 1,
+                      cursor: Object.keys(quizAnswers).length < (currentLesson.quiz.questions?.length || 0) ? 'not-allowed' : 'pointer'
                     }}
                   >
                     <Sparkles size={16} />
