@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { 
   Sparkles, 
+  BookOpen,
   Brain, 
   Flame, 
   Zap, 
@@ -23,6 +24,7 @@ import { ACHIEVEMENTS } from '../../utils/catalog';
 
 const ICON_MAP = {
   Sparkles,
+  BookOpen,
   Brain,
   Flame,
   Zap,
