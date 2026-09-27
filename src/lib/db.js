@@ -72,7 +72,10 @@ export async function ensureTables() {
 async function createTablesAndMigrate() {
   const sql = getDb();
 
-  await sql`
+  // Run all DDL in one database transaction. This publishes the schema changes
+  // atomically so other serverless instances never observe a partial migration.
+  await sql.transaction([
+    sql`
     CREATE TABLE IF NOT EXISTS users (
       username TEXT PRIMARY KEY,
       password TEXT,
@@ -95,9 +98,9 @@ async function createTablesAndMigrate() {
       created_at BIGINT,
       updated_at BIGINT
     )
-  `;
+  `,
 
-  await sql`
+    sql`
     CREATE TABLE IF NOT EXISTS courses (
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
@@ -113,25 +116,25 @@ async function createTablesAndMigrate() {
       created_at BIGINT,
       updated_at BIGINT
     )
-  `;
+  `,
 
-  await sql`
+    sql`
     CREATE TABLE IF NOT EXISTS app_state (
       key TEXT PRIMARY KEY,
       value TEXT,
       updated_at BIGINT
     )
-  `;
+  `,
 
-  await sql`
+    sql`
     CREATE TABLE IF NOT EXISTS sessions (
       token TEXT PRIMARY KEY,
       username TEXT,
       created_at BIGINT
     )
-  `;
+  `,
 
-  await sql`
+    sql`
     CREATE TABLE IF NOT EXISTS course_progress (
       id TEXT PRIMARY KEY,
       username TEXT NOT NULL,
@@ -145,12 +148,13 @@ async function createTablesAndMigrate() {
       completed INTEGER DEFAULT 0,
       updated_at BIGINT
     )
-  `;
+  `,
 
-  await sql`ALTER TABLE course_progress ADD COLUMN IF NOT EXISTS lesson_completed_at TEXT DEFAULT '{}'`;
-  await sql`ALTER TABLE courses ADD COLUMN IF NOT EXISTS owner_username TEXT`;
-  await sql`UPDATE courses SET owner_username = NULL WHERE owner_username = ''`;
-  await sql`CREATE INDEX IF NOT EXISTS courses_owner_username_idx ON courses (owner_username)`;
+    sql`ALTER TABLE course_progress ADD COLUMN IF NOT EXISTS lesson_completed_at TEXT DEFAULT '{}'`,
+    sql`ALTER TABLE courses ADD COLUMN IF NOT EXISTS owner_username TEXT`,
+    sql`UPDATE courses SET owner_username = NULL WHERE owner_username = ''`,
+    sql`CREATE INDEX IF NOT EXISTS courses_owner_username_idx ON courses (owner_username)`,
+  ]);
 }
 
 // ---------------------------------------------------------------------------
