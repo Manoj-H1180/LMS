@@ -53,6 +53,27 @@ export const DEFAULT_USER = {
   soundEnabled: true
 };
 
+function normalizeCourse(course) {
+  if (!course || typeof course !== 'object') return null;
+  const modules = (Array.isArray(course.modules) ? course.modules : [])
+    .filter(module => module && typeof module === 'object')
+    .map(module => ({
+      ...module,
+      lessons: (Array.isArray(module.lessons) ? module.lessons : [])
+        .filter(lesson => lesson && typeof lesson === 'object')
+        .map(lesson => ({
+          ...lesson,
+          duration: typeof lesson.duration === 'string' && lesson.duration.trim() ? lesson.duration : '10 min',
+        })),
+    }));
+
+  return { ...course, modules };
+}
+
+function normalizeCourses(courses) {
+  return courses.map(normalizeCourse).filter(Boolean);
+}
+
 // Synchronous local cache loader (used for instant render)
 export function loadUser() {
   if (typeof window === 'undefined') return DEFAULT_USER;
@@ -121,7 +142,7 @@ export function loadCourses() {
     if (!raw) return INITIAL_COURSES;
     const stored = JSON.parse(raw);
     if (!Array.isArray(stored)) return INITIAL_COURSES;
-    return stored;
+    return normalizeCourses(stored);
   } catch {
     return INITIAL_COURSES;
   }
@@ -133,10 +154,11 @@ export async function fetchCoursesFromDisk() {
     const res = await fetch('/api/courses');
     const data = await res.json();
     if (res.ok && data.success && Array.isArray(data.courses)) {
+      const courses = normalizeCourses(data.courses);
       if (typeof window !== 'undefined') {
-        localStorage.setItem(activeCourseCacheKey, JSON.stringify(data.courses));
+        localStorage.setItem(activeCourseCacheKey, JSON.stringify(courses));
       }
-      return data.courses;
+      return courses;
     }
   } catch (e) {
     console.warn('Could not fetch courses from SQLite disk, using local cache:', e);

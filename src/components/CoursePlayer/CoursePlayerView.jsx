@@ -369,6 +369,16 @@ export default function CoursePlayerView({
     return () => window.clearTimeout(notesTimerRef.current);
   }, [currentNote, currentLesson, user, course.id, onUpdateUser, progressPercent, isCourseFullyCompleted]);
 
+  if (allLessons.length === 0) {
+    return (
+      <section role="alert" className="glass-panel" style={{ maxWidth: 680, margin: '48px auto', padding: 32, textAlign: 'center' }}>
+        <h1 style={{ color: '#fff', marginBottom: 10 }}>No playable lessons found</h1>
+        <p style={{ color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: 20 }}>This course has no valid lessons. Return to your courses and re-import it after checking the lesson files.</p>
+        <button type="button" className="glow-btn" onClick={onBack}>Back to courses</button>
+      </section>
+    );
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 'calc(100vh - 72px)' }}>
       {/* Top Learning Bar */}

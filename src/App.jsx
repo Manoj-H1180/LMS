@@ -5,6 +5,7 @@ import Navbar from './components/Navbar';
 import Sidebar from './components/Sidebar';
 import DashboardView from './components/Dashboard/DashboardView';
 import CoursePlayerView from './components/CoursePlayer/CoursePlayerView';
+import CoursePlayerBoundary from './components/CoursePlayer/CoursePlayerBoundary';
 import LocalCourseImporter from './components/LocalImport/LocalCourseImporter';
 import CourseCreatorModal from './components/CourseCreator/CourseCreatorModal';
 import LeaderboardView from './components/Leaderboard/LeaderboardView';
@@ -217,12 +218,14 @@ export default function App() {
         <main id="main-content" className="content-body" tabIndex={-1}>
           {/* Active Course Learning View */}
           {activeCourse ? (
-            <CoursePlayerView
-              course={activeCourse}
-              user={user}
-              onUpdateUser={setUser}
-              onBack={() => setActiveCourse(null)}
-            />
+            <CoursePlayerBoundary key={activeCourse.id} onBack={() => setActiveCourse(null)}>
+              <CoursePlayerView
+                course={activeCourse}
+                user={user}
+                onUpdateUser={setUser}
+                onBack={() => setActiveCourse(null)}
+              />
+            </CoursePlayerBoundary>
           ) : activeTab === 'dashboard' || activeTab === 'courses' ? (
             <DashboardView
               user={user}
