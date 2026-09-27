@@ -26,7 +26,7 @@ async function getAuthenticatedUsername(request, fallbackUsername) {
   const cookieStore = await cookies();
   const token = cookieStore.get('lms_session')?.value;
   if (token) {
-    const sessionUser = getUserBySession(token);
+    const sessionUser = await getUserBySession(token);
     if (sessionUser?.username) return sessionUser.username;
   }
   return fallbackUsername || 'default_learner';
@@ -39,21 +39,15 @@ export async function GET(request) {
 
     const username = await getAuthenticatedUsername(request, paramUsername);
 
-    let user = getUser(username);
+    let user = await getUser(username);
     if (!user) {
-      user = upsertUser({ ...DEFAULT_USER, username });
+      user = await upsertUser({ ...DEFAULT_USER, username });
     }
 
-    return NextResponse.json({
-      success: true,
-      user,
-    });
+    return NextResponse.json({ success: true, user });
   } catch (error) {
-    console.error('Error getting user from SQLite:', error);
-    return NextResponse.json(
-      { success: false, error: 'Failed to retrieve user from SQLite' },
-      { status: 500 }
-    );
+    console.error('Error getting user from Neon Postgres:', error);
+    return NextResponse.json({ success: false, error: 'Failed to retrieve user' }, { status: 500 });
   }
 }
 
@@ -65,7 +59,7 @@ export async function POST(request) {
     }
 
     const username = (await getAuthenticatedUsername(request, updatedData.username)).toLowerCase();
-    const existing = getUser(username) || { ...DEFAULT_USER, username };
+    const existing = (await getUser(username)) || { ...DEFAULT_USER, username };
 
     const merged = {
       ...existing,
@@ -74,15 +68,11 @@ export async function POST(request) {
       lastActiveDate: new Date().toISOString().split('T')[0],
     };
 
-    const savedUser = upsertUser(merged);
+    const savedUser = await upsertUser(merged);
 
-    return NextResponse.json({
-      success: true,
-      message: 'User progress persisted to SQLite database on disk',
-      user: savedUser,
-    });
+    return NextResponse.json({ success: true, message: 'User progress saved to Neon Postgres', user: savedUser });
   } catch (error) {
-    console.error('Error saving user to SQLite:', error);
+    console.error('Error saving user to Neon Postgres:', error);
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
 }

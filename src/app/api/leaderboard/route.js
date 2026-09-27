@@ -6,7 +6,7 @@ export async function GET(request) {
     const { searchParams } = new URL(request.url);
     const currentUser = searchParams.get('username') || '';
 
-    const users = getAllLeaderboardUsers();
+    const users = await getAllLeaderboardUsers();
 
     // Map and mark the current active user
     const leaderboard = users.map(u => ({

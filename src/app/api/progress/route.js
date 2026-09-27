@@ -11,7 +11,7 @@ async function resolveUsername(request, fallbackUsername) {
   const cookieStore = await cookies();
   const token = cookieStore.get('lms_session')?.value;
   if (token) {
-    const user = getUserBySession(token);
+    const user = await getUserBySession(token);
     if (user?.username) return user.username;
   }
   return fallbackUsername || 'default_learner';
@@ -26,7 +26,7 @@ export async function GET(request) {
     const username = await resolveUsername(request, paramUsername);
 
     if (courseId) {
-      const progress = getCourseProgress(username, courseId);
+      const progress = await getCourseProgress(username, courseId);
       return NextResponse.json({
         success: true,
         progress: progress || {
@@ -43,13 +43,10 @@ export async function GET(request) {
       });
     }
 
-    const allProgress = getAllUserCourseProgress(username);
-    return NextResponse.json({
-      success: true,
-      allProgress
-    });
+    const allProgress = await getAllUserCourseProgress(username);
+    return NextResponse.json({ success: true, allProgress });
   } catch (error) {
-    console.error('Error fetching progress from SQLite:', error);
+    console.error('Error fetching progress from Neon Postgres:', error);
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
 }
@@ -65,7 +62,7 @@ export async function POST(request) {
 
     const username = await resolveUsername(request, body.username);
 
-    const savedProgress = saveCourseProgress({
+    const savedProgress = await saveCourseProgress({
       username,
       courseId,
       lastLessonId,
@@ -77,13 +74,9 @@ export async function POST(request) {
       completed
     });
 
-    return NextResponse.json({
-      success: true,
-      message: 'Course progress saved in SQLite on disk',
-      progress: savedProgress
-    });
+    return NextResponse.json({ success: true, message: 'Progress saved to Neon Postgres', progress: savedProgress });
   } catch (error) {
-    console.error('Error saving progress to SQLite:', error);
+    console.error('Error saving progress to Neon Postgres:', error);
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
 }

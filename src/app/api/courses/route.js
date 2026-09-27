@@ -9,18 +9,11 @@ import {
 
 export async function GET() {
   try {
-    const courses = getAllCourses();
-    return NextResponse.json({
-      success: true,
-      count: courses.length,
-      courses,
-    });
+    const courses = await getAllCourses();
+    return NextResponse.json({ success: true, count: courses.length, courses });
   } catch (error) {
-    console.error('Error fetching courses from SQLite:', error);
-    return NextResponse.json(
-      { success: false, error: 'Failed to fetch courses from SQLite database' },
-      { status: 500 }
-    );
+    console.error('Error fetching courses from Neon Postgres:', error);
+    return NextResponse.json({ success: false, error: 'Failed to fetch courses' }, { status: 500 });
   }
 }
 
@@ -28,47 +21,25 @@ export async function POST(request) {
   try {
     const body = await request.json();
 
-    // If clearing all courses
     if (body.action === 'clear') {
-      clearAllCourses();
-      return NextResponse.json({
-        success: true,
-        message: 'All courses cleared from SQLite database',
-        count: 0
-      });
+      await clearAllCourses();
+      return NextResponse.json({ success: true, message: 'All courses cleared', count: 0 });
     }
 
-    // If an entire course list is synced
     if (body.courses && Array.isArray(body.courses)) {
-      const savedCourses = syncCourses(body.courses);
-      return NextResponse.json({
-        success: true,
-        message: 'Courses saved to SQLite database',
-        count: savedCourses.length,
-        courses: savedCourses,
-      });
+      const savedCourses = await syncCourses(body.courses);
+      return NextResponse.json({ success: true, message: 'Courses synced to Neon Postgres', count: savedCourses.length, courses: savedCourses });
     }
 
-    // If a single new course is created / imported
     if (body.course && body.course.id) {
-      const saved = upsertCourse(body.course);
-      return NextResponse.json({
-        success: true,
-        message: 'Course saved to SQLite database on disk',
-        course: saved,
-      });
+      const saved = await upsertCourse(body.course);
+      return NextResponse.json({ success: true, message: 'Course saved to Neon Postgres', course: saved });
     }
 
-    return NextResponse.json(
-      { success: false, error: 'Invalid payload' },
-      { status: 400 }
-    );
+    return NextResponse.json({ success: false, error: 'Invalid payload' }, { status: 400 });
   } catch (error) {
-    console.error('Error saving courses to SQLite:', error);
-    return NextResponse.json(
-      { success: false, error: error.message || 'Server error' },
-      { status: 500 }
-    );
+    console.error('Error saving courses to Neon Postgres:', error);
+    return NextResponse.json({ success: false, error: error.message || 'Server error' }, { status: 500 });
   }
 }
 
@@ -81,19 +52,12 @@ export async function DELETE(request) {
       return NextResponse.json({ success: false, error: 'Course ID is required' }, { status: 400 });
     }
 
-    deleteCourse(id);
-    const remaining = getAllCourses();
+    await deleteCourse(id);
+    const remaining = await getAllCourses();
 
-    return NextResponse.json({
-      success: true,
-      message: `Course ${id} deleted from SQLite database`,
-      remainingCount: remaining.length,
-    });
+    return NextResponse.json({ success: true, message: `Course ${id} deleted`, remainingCount: remaining.length });
   } catch (error) {
-    console.error('Error deleting course from SQLite:', error);
-    return NextResponse.json(
-      { success: false, error: error.message },
-      { status: 500 }
-    );
+    console.error('Error deleting course:', error);
+    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
 }
