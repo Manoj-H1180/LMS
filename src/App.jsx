@@ -12,7 +12,7 @@ import BadgesView from './components/Badges/BadgesView';
 import RewardsShopView from './components/Shop/RewardsShopView';
 import CelebrationModal from './components/Celebration/CelebrationModal';
 import CourseCard from './components/CourseCard';
-import AuthScreen, { getStoredSession, clearSession } from './components/Auth/AuthScreen';
+import AuthScreen, { checkServerSession, clearSession } from './components/Auth/AuthScreen';
 
 import { 
   loadUser, 
@@ -40,18 +40,14 @@ export default function App() {
 
   useEffect(() => {
     setMounted(true);
-    // Check for existing auth session
-    const session = getStoredSession();
-    if (session) {
-      setAuthedUser(session);
-      setUser(prev => ({ ...prev, ...session }));
-      // Fetch latest profile from SQLite on disk
-      if (session.username) {
-        fetchUserFromDisk(session.username).then(dbUser => {
-          if (dbUser) setUser(dbUser);
-        });
+
+    // Verify authentication against SQLite database on disk
+    checkServerSession().then(serverUser => {
+      if (serverUser) {
+        setAuthedUser(serverUser);
+        setUser(serverUser);
       }
-    }
+    });
 
     // Fetch courses from SQLite database on disk
     fetchCoursesFromDisk().then(diskCourses => {
@@ -70,12 +66,11 @@ export default function App() {
 
   const handleAuthenticated = (userData) => {
     setAuthedUser(userData);
-    // Merge auth profile into user state
     setUser(prev => ({ ...prev, ...userData }));
   };
 
-  const handleLogout = () => {
-    clearSession();
+  const handleLogout = async () => {
+    await clearSession();
     setAuthedUser(null);
     soundFX.playClick();
   };

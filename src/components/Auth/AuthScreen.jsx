@@ -5,41 +5,30 @@ import { Eye, EyeOff, LogIn, UserPlus, Sparkles, BookOpen } from 'lucide-react';
 
 const AVATARS = ['🎓', '👨‍💻', '👩‍💻', '🧑‍🎨', '🧑‍🔬', '🧙', '🦊', '🐉', '🚀', '⚡', '🌟', '🔥'];
 
-const AUTH_KEY = 'nexus_lms_auth_v1';
-const ACCOUNTS_KEY = 'nexus_lms_accounts_v1';
-
-export function getStoredSession() {
-  if (typeof window === 'undefined') return null;
+// SQLite-backed session verification
+export async function checkServerSession() {
   try {
-    const raw = localStorage.getItem(AUTH_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
+    const res = await fetch('/api/auth');
+    const data = await res.json();
+    if (data.success && data.authenticated && data.user) {
+      return data.user;
+    }
+  } catch (e) {
+    console.warn('SQLite session check failed:', e);
   }
+  return null;
 }
 
-export function clearSession() {
-  if (typeof window === 'undefined') return;
-  localStorage.removeItem(AUTH_KEY);
-}
-
-function getAccounts() {
+export async function clearSession() {
   try {
-    const raw = localStorage.getItem(ACCOUNTS_KEY);
-    return raw ? JSON.parse(raw) : {};
-  } catch {
-    return {};
+    await fetch('/api/auth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'logout' })
+    });
+  } catch (e) {
+    console.warn('SQLite logout failed:', e);
   }
-}
-
-function saveAccount(username, data) {
-  const accounts = getAccounts();
-  accounts[username.toLowerCase()] = data;
-  localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts));
-}
-
-function saveSession(userData) {
-  localStorage.setItem(AUTH_KEY, JSON.stringify({ ...userData, loggedInAt: Date.now() }));
 }
 
 export default function AuthScreen({ onAuthenticated }) {
@@ -73,16 +62,9 @@ export default function AuthScreen({ onAuthenticated }) {
         return;
       }
 
-      saveSession(data.user);
       onAuthenticated(data.user);
     } catch {
-      // Offline fallback
-      const accounts = getAccounts();
-      const account = accounts[username.toLowerCase()];
-      if (!account) { setError('No account found with that username.'); setIsLoading(false); return; }
-      if (account.password !== btoa(password)) { setError('Incorrect password.'); setIsLoading(false); return; }
-      saveSession(account.userData);
-      onAuthenticated(account.userData);
+      setError('Unable to reach SQLite server. Please ensure the server is running.');
     } finally {
       setIsLoading(false);
     }
@@ -117,35 +99,9 @@ export default function AuthScreen({ onAuthenticated }) {
         return;
       }
 
-      saveAccount(username, { password: btoa(password), userData: data.user });
-      saveSession(data.user);
       onAuthenticated(data.user);
     } catch {
-      // Offline fallback
-      const accounts = getAccounts();
-      if (accounts[username.toLowerCase()]) { setError('Username already taken. Try another.'); setIsLoading(false); return; }
-      const userData = {
-        username: username.toLowerCase(),
-        name: displayName.trim(),
-        avatar: selectedAvatar,
-        title: 'Novice Scholar',
-        xp: 0,
-        coins: 100,
-        streak: 0,
-        streakFrozen: false,
-        doubleXPUntil: null,
-        lastActiveDate: new Date().toISOString().split('T')[0],
-        completedLessons: [],
-        quizScores: {},
-        unlockedAchievements: [],
-        inventory: ['theme_cyberpunk'],
-        activeTheme: 'cyberpunk',
-        lessonNotes: {},
-        soundEnabled: true,
-      };
-      saveAccount(username, { password: btoa(password), userData });
-      saveSession(userData);
-      onAuthenticated(userData);
+      setError('Unable to reach SQLite server. Please ensure the server is running.');
     } finally {
       setIsLoading(false);
     }

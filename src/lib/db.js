@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 
 const DB_DIR = path.join(process.cwd(), 'data');
@@ -315,4 +316,38 @@ export function setAppState(key, value) {
   `);
   stmt.run(key, str, now);
   return value;
+}
+
+// ================= Sessions API =================
+export function createSession(username) {
+  const token = crypto.randomUUID();
+  const now = Date.now();
+  const stmt = db.prepare('INSERT INTO sessions (token, username, created_at) VALUES (?, ?, ?)');
+  stmt.run(token, username.toLowerCase(), now);
+  return token;
+}
+
+export function getUserBySession(token) {
+  if (!token) return null;
+  const stmt = db.prepare(`
+    SELECT u.* FROM users u
+    JOIN sessions s ON u.username = s.username COLLATE NOCASE
+    WHERE s.token = ?
+  `);
+  const row = stmt.get(token);
+  return formatUserRecord(row);
+}
+
+export function deleteSession(token) {
+  if (!token) return false;
+  const stmt = db.prepare('DELETE FROM sessions WHERE token = ?');
+  stmt.run(token);
+  return true;
+}
+
+export function clearUserSessions(username) {
+  if (!username) return false;
+  const stmt = db.prepare('DELETE FROM sessions WHERE username = ? COLLATE NOCASE');
+  stmt.run(username.toLowerCase());
+  return true;
 }
