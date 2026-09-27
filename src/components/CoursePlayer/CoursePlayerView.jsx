@@ -75,6 +75,8 @@ export default function CoursePlayerView({
   const [videoState, setVideoState] = useState({ currentTime: 0, duration: 0, paused: true, volume: 1, muted: false, buffered: 0, error: '' });
   const [expandedModules, setExpandedModules] = useState({ 0: true, 1: true });
   const [mobileTab, setMobileTab] = useState('lesson'); // 'lesson' | 'syllabus'
+  // Maps lessonId → ephemeral blob URL for local video files re-selected in this session
+  const [localBlobUrls, setLocalBlobUrls] = useState({});
 
   // Interactive Quiz State
   const [quizAnswers, setQuizAnswers] = useState({});
@@ -83,11 +85,20 @@ export default function CoursePlayerView({
   const [restoreProgress, setRestoreProgress] = useState(null);
 
   const videoRef = useRef(null);
+  const localVideoFileInputRef = useRef(null);
   const savedPlaybackTimeRef = useRef(0);
   const hydratedProgressCourseRef = useRef(null);
   const notesTimerRef = useRef(null);
   const playerShellRef = useRef(null);
   const currentVideoCheckpointRef = useRef(null);
+  // Cleanup blob URLs when component unmounts to free memory
+  const localBlobUrlsRef = useRef(localBlobUrls);
+  localBlobUrlsRef.current = localBlobUrls;
+  useEffect(() => {
+    return () => {
+      Object.values(localBlobUrlsRef.current).forEach(url => URL.revokeObjectURL(url));
+    };
+  }, []);
 
   const currentLesson = allLessons.find(l => l.id === currentLessonId) || allLessons[0];
   const currentIndex = allLessons.findIndex(l => l.id === currentLessonId);
@@ -652,111 +663,211 @@ export default function CoursePlayerView({
           </div>
 
           {/* Video Player (if type === 'video') */}
-          {currentLesson?.type === 'video' && (
-            <section ref={playerShellRef} className="video-player-shell" aria-label={`Video lesson: ${currentLesson.title}`}>
-              <video
-                key={currentLesson.id}
-                ref={videoRef}
-                src={currentLesson.videoUrl || 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4'}
-                preload="metadata"
-                playsInline
-                aria-label={currentLesson.title}
-                onLoadedMetadata={event => {
-                  const { duration, currentTime } = event.currentTarget;
-                  setVideoState(state => ({ ...state, duration, currentTime, error: '' }));
-                }}
-                onDurationChange={event => {
-                  const { duration } = event.currentTarget;
-                  setVideoState(state => ({ ...state, duration }));
-                }}
-                onTimeUpdate={event => {
-                  const video = event.currentTarget;
-                  const sec = Math.floor(video.currentTime);
-                  setVideoState(state => ({ ...state, currentTime: video.currentTime, buffered: video.buffered.length ? video.buffered.end(video.buffered.length - 1) : 0 }));
-                  currentVideoCheckpointRef.current = {
-                    courseId: course.id,
-                    lastLessonId: currentLesson.id,
-                    playbackTime: sec,
-                    completedLessons: user.completedLessons || [],
-                    lessonCompletedAt: user.lessonCompletedAt || {},
-                    quizScores: user.quizScores || {},
-                    notes: user.lessonNotes || {},
-                    progressPercent,
-                    completed: isCourseFullyCompleted
-                  };
-                  if (sec > 0 && sec % 10 === 0 && savedPlaybackTimeRef.current !== sec) {
-                    savedPlaybackTimeRef.current = sec;
-                    saveCourseProgressToDisk(currentVideoCheckpointRef.current);
-                  }
-                }}
-                onPlay={() => setVideoState(state => ({ ...state, paused: false, error: '' }))}
-                onPause={event => {
-                  const video = event.currentTarget;
-                  setVideoState(state => ({ ...state, paused: true, currentTime: video.currentTime }));
-                  const checkpoint = {
-                    courseId: course.id,
-                    lastLessonId: currentLesson.id,
-                    playbackTime: Math.floor(video.currentTime),
-                    completedLessons: user.completedLessons || [],
-                    lessonCompletedAt: user.lessonCompletedAt || {},
-                    quizScores: user.quizScores || {},
-                    notes: user.lessonNotes || {},
-                    progressPercent,
-                    completed: isCourseFullyCompleted
-                  };
-                  currentVideoCheckpointRef.current = checkpoint;
-                  saveCourseProgressToDisk(checkpoint);
-                }}
-                onVolumeChange={event => {
-                  const { volume, muted } = event.currentTarget;
-                  setVideoState(state => ({ ...state, volume, muted }));
-                }}
-                onError={() => setVideoState(state => ({ ...state, error: 'This video could not be loaded. Check the lesson URL and your connection, then try again.' }))}
-                onEnded={handleCompleteLesson}
-                className="video-player-media"
-              />
-              {videoState.error && <div className="video-player-error" role="alert"><AlertCircle size={18} />{videoState.error}</div>}
-              <div className="video-player-controls">
+          {currentLesson?.type === 'video' && (() => {
+            // Resolve the video source: prefer DB-stored URL, then session blob URL, then nothing
+            const resolvedVideoSrc = currentLesson.videoUrl || localBlobUrls[currentLesson.id] || '';
+            // A local-import lesson with no resolvable video URL needs the user to re-select the file
+            const isLocalMissingVideo = course.isImported && !resolvedVideoSrc;
+            return (
+              <section ref={playerShellRef} className="video-player-shell" aria-label={`Video lesson: ${currentLesson.title}`}>
+                {/* Hidden file input for re-selecting local video files */}
                 <input
-                  className="video-player-timeline"
-                  type="range"
-                  min="0"
-                  max={videoState.duration || 0}
-                  step="0.1"
-                  value={Math.min(videoState.currentTime, videoState.duration || 0)}
-                  aria-label="Video position"
-                  style={{ '--video-progress': `${videoState.duration ? videoState.currentTime / videoState.duration * 100 : 0}%`, '--video-buffer': `${videoState.duration ? videoState.buffered / videoState.duration * 100 : 0}%` }}
-                  onChange={event => { if (videoRef.current) videoRef.current.currentTime = Number(event.target.value); }}
-                  disabled={!videoState.duration}
+                  ref={localVideoFileInputRef}
+                  type="file"
+                  accept="video/*"
+                  style={{ display: 'none' }}
+                  aria-hidden="true"
+                  onChange={event => {
+                    const file = event.target.files?.[0];
+                    if (!file) return;
+                    // Revoke previous blob URL for this lesson if any
+                    if (localBlobUrls[currentLesson.id]) {
+                      URL.revokeObjectURL(localBlobUrls[currentLesson.id]);
+                    }
+                    const newBlobUrl = URL.createObjectURL(file);
+                    setLocalBlobUrls(prev => ({ ...prev, [currentLesson.id]: newBlobUrl }));
+                    setVideoState(state => ({ ...state, error: '', currentTime: 0, duration: 0, paused: true }));
+                    // Reset the input so the same file can be re-selected if needed
+                    event.target.value = '';
+                  }}
                 />
-                <div className="video-player-control-row">
-                  <div className="video-player-control-group">
-                    <button className="video-control-button" onClick={toggleVideoPlayback} aria-label={videoState.paused ? 'Play video' : 'Pause video'} title="Play/Pause (Space)">
-                      {videoState.paused ? <Play size={19} fill="currentColor" /> : <Pause size={19} fill="currentColor" />}
-                    </button>
-                    <button className="video-control-button video-skip-button" onClick={() => seekVideo(-10)} aria-label="Back 10 seconds" title="Back 10 seconds (←)"><RotateCcw size={17} /><span>10</span></button>
-                    <button className="video-control-button video-skip-button" onClick={() => seekVideo(10)} aria-label="Forward 10 seconds" title="Forward 10 seconds (→)"><RotateCw size={17} /><span>10</span></button>
-                    <button className="video-control-button" onClick={() => { if (!videoRef.current) return; videoRef.current.muted = !videoRef.current.muted; }} aria-label={videoState.muted ? 'Unmute video' : 'Mute video'} title="Mute (M)">
-                      {videoState.muted || videoState.volume === 0 ? <VolumeX size={18} /> : <Volume2 size={18} />}
-                    </button>
-                    <input className="video-player-volume" type="range" min="0" max="1" step="0.05" value={videoState.muted ? 0 : videoState.volume} aria-label="Volume" onChange={event => { if (videoRef.current) { videoRef.current.volume = Number(event.target.value); videoRef.current.muted = Number(event.target.value) === 0; } }} />
-                    <span className="video-player-time">{formatTime(videoState.currentTime)} <span>/</span> {formatTime(videoState.duration)}</span>
+
+                {/* Local video missing — show actionable re-upload overlay */}
+                {isLocalMissingVideo ? (
+                  <div className="local-video-missing-overlay" role="status">
+                    <div className="local-video-missing-content">
+                      <div className="local-video-missing-icon">
+                        <Video size={36} />
+                      </div>
+                      <h3 className="local-video-missing-title">Local Video File Required</h3>
+                      <p className="local-video-missing-desc">
+                        This lesson uses a video from your device. Local files are not stored on the server — 
+                        please re-select the original video file to continue watching.
+                      </p>
+                      <button
+                        className="local-video-load-btn"
+                        onClick={() => localVideoFileInputRef.current?.click()}
+                        aria-label="Select local video file for this lesson"
+                      >
+                        <Video size={16} />
+                        Select Video File
+                      </button>
+                      <p className="local-video-missing-hint">
+                        Your progress is saved. Selecting the file does not reset it.
+                      </p>
+                    </div>
                   </div>
-                  <div className="video-player-control-group">
-                    <label className="video-speed-label">Speed
-                      <select className="video-player-speed" value={playbackSpeed} onChange={event => setPlaybackSpeed(Number(event.target.value))} aria-label="Playback speed">
-                        {[0.5, 0.75, 1, 1.25, 1.5, 1.75, 2].map(speed => <option key={speed} value={speed}>{speed}×</option>)}
-                      </select>
-                    </label>
-                    <button className="video-control-button" onClick={toggleFullscreen} aria-label={videoState.fullscreen ? 'Exit fullscreen' : 'Enter fullscreen'} title="Fullscreen (F)">
-                      {videoState.fullscreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
-                    </button>
-                  </div>
-                </div>
-              </div>
-              <div className="video-player-shortcuts" aria-hidden="true">SPACE Play/Pause <span>← / → Seek 10s</span> M Mute <span>F Fullscreen</span></div>
-            </section>
-          )}
+                ) : (
+                  <>
+                    <video
+                      key={currentLesson.id + (localBlobUrls[currentLesson.id] || '')}
+                      ref={videoRef}
+                      src={resolvedVideoSrc}
+                      preload="metadata"
+                      playsInline
+                      aria-label={currentLesson.title}
+                      onLoadedMetadata={event => {
+                        const { duration, currentTime } = event.currentTarget;
+                        setVideoState(state => ({ ...state, duration, currentTime, error: '' }));
+                      }}
+                      onDurationChange={event => {
+                        const { duration } = event.currentTarget;
+                        setVideoState(state => ({ ...state, duration }));
+                      }}
+                      onTimeUpdate={event => {
+                        const video = event.currentTarget;
+                        const sec = Math.floor(video.currentTime);
+                        setVideoState(state => ({ ...state, currentTime: video.currentTime, buffered: video.buffered.length ? video.buffered.end(video.buffered.length - 1) : 0 }));
+                        currentVideoCheckpointRef.current = {
+                          courseId: course.id,
+                          lastLessonId: currentLesson.id,
+                          playbackTime: sec,
+                          completedLessons: user.completedLessons || [],
+                          lessonCompletedAt: user.lessonCompletedAt || {},
+                          quizScores: user.quizScores || {},
+                          notes: user.lessonNotes || {},
+                          progressPercent,
+                          completed: isCourseFullyCompleted
+                        };
+                        if (sec > 0 && sec % 10 === 0 && savedPlaybackTimeRef.current !== sec) {
+                          savedPlaybackTimeRef.current = sec;
+                          saveCourseProgressToDisk(currentVideoCheckpointRef.current);
+                        }
+                      }}
+                      onPlay={() => setVideoState(state => ({ ...state, paused: false, error: '' }))}
+                      onPause={event => {
+                        const video = event.currentTarget;
+                        setVideoState(state => ({ ...state, paused: true, currentTime: video.currentTime }));
+                        const checkpoint = {
+                          courseId: course.id,
+                          lastLessonId: currentLesson.id,
+                          playbackTime: Math.floor(video.currentTime),
+                          completedLessons: user.completedLessons || [],
+                          lessonCompletedAt: user.lessonCompletedAt || {},
+                          quizScores: user.quizScores || {},
+                          notes: user.lessonNotes || {},
+                          progressPercent,
+                          completed: isCourseFullyCompleted
+                        };
+                        currentVideoCheckpointRef.current = checkpoint;
+                        saveCourseProgressToDisk(checkpoint);
+                      }}
+                      onVolumeChange={event => {
+                        const { volume, muted } = event.currentTarget;
+                        setVideoState(state => ({ ...state, volume, muted }));
+                      }}
+                      onError={event => {
+                        // If this is a local import course and the src was a (now-dead) blob URL,
+                        // clear the bad blob URL and prompt re-selection instead of showing a generic error.
+                        const src = event.currentTarget.src || '';
+                        if (course.isImported && src.startsWith('blob:')) {
+                          // The blob is dead — revoke it and prompt user to re-select
+                          URL.revokeObjectURL(src);
+                          setLocalBlobUrls(prev => {
+                            const next = { ...prev };
+                            delete next[currentLesson.id];
+                            return next;
+                          });
+                          // Don't set the generic error text; the missing overlay will take over
+                          return;
+                        }
+                        setVideoState(state => ({ ...state, error: 'This video could not be loaded. Check the lesson URL and your connection, then try again.' }));
+                      }}
+                      onEnded={handleCompleteLesson}
+                      className="video-player-media"
+                    />
+                    {videoState.error && (
+                      <div className="video-player-error" role="alert">
+                        <AlertCircle size={18} />{videoState.error}
+                        {course.isImported && (
+                          <button
+                            className="video-reload-local-btn"
+                            onClick={() => {
+                              setVideoState(s => ({ ...s, error: '' }));
+                              localVideoFileInputRef.current?.click();
+                            }}
+                            style={{ marginLeft: 12, padding: '4px 12px', borderRadius: 6, background: 'rgba(56,189,248,0.15)', border: '1px solid rgba(56,189,248,0.4)', color: '#38bdf8', cursor: 'pointer', fontSize: '0.8rem' }}
+                          >
+                            Select file…
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    {/* "Change file" button for active local video sessions */}
+                    {course.isImported && localBlobUrls[currentLesson.id] && !videoState.error && (
+                      <button
+                        className="local-video-change-btn"
+                        onClick={() => localVideoFileInputRef.current?.click()}
+                        title="Select a different video file"
+                        aria-label="Select a different local video file"
+                      >
+                        <Video size={13} /> Change file
+                      </button>
+                    )}
+                    <div className="video-player-controls">
+                      <input
+                        className="video-player-timeline"
+                        type="range"
+                        min="0"
+                        max={videoState.duration || 0}
+                        step="0.1"
+                        value={Math.min(videoState.currentTime, videoState.duration || 0)}
+                        aria-label="Video position"
+                        style={{ '--video-progress': `${videoState.duration ? videoState.currentTime / videoState.duration * 100 : 0}%`, '--video-buffer': `${videoState.duration ? videoState.buffered / videoState.duration * 100 : 0}%` }}
+                        onChange={event => { if (videoRef.current) videoRef.current.currentTime = Number(event.target.value); }}
+                        disabled={!videoState.duration}
+                      />
+                      <div className="video-player-control-row">
+                        <div className="video-player-control-group">
+                          <button className="video-control-button" onClick={toggleVideoPlayback} aria-label={videoState.paused ? 'Play video' : 'Pause video'} title="Play/Pause (Space)">
+                            {videoState.paused ? <Play size={19} fill="currentColor" /> : <Pause size={19} fill="currentColor" />}
+                          </button>
+                          <button className="video-control-button video-skip-button" onClick={() => seekVideo(-10)} aria-label="Back 10 seconds" title="Back 10 seconds (←)"><RotateCcw size={17} /><span>10</span></button>
+                          <button className="video-control-button video-skip-button" onClick={() => seekVideo(10)} aria-label="Forward 10 seconds" title="Forward 10 seconds (→)"><RotateCw size={17} /><span>10</span></button>
+                          <button className="video-control-button" onClick={() => { if (!videoRef.current) return; videoRef.current.muted = !videoRef.current.muted; }} aria-label={videoState.muted ? 'Unmute video' : 'Mute video'} title="Mute (M)">
+                            {videoState.muted || videoState.volume === 0 ? <VolumeX size={18} /> : <Volume2 size={18} />}
+                          </button>
+                          <input className="video-player-volume" type="range" min="0" max="1" step="0.05" value={videoState.muted ? 0 : videoState.volume} aria-label="Volume" onChange={event => { if (videoRef.current) { videoRef.current.volume = Number(event.target.value); videoRef.current.muted = Number(event.target.value) === 0; } }} />
+                          <span className="video-player-time">{formatTime(videoState.currentTime)} <span>/</span> {formatTime(videoState.duration)}</span>
+                        </div>
+                        <div className="video-player-control-group">
+                          <label className="video-speed-label">Speed
+                            <select className="video-player-speed" value={playbackSpeed} onChange={event => setPlaybackSpeed(Number(event.target.value))} aria-label="Playback speed">
+                              {[0.5, 0.75, 1, 1.25, 1.5, 1.75, 2].map(speed => <option key={speed} value={speed}>{speed}×</option>)}
+                            </select>
+                          </label>
+                          <button className="video-control-button" onClick={toggleFullscreen} aria-label={videoState.fullscreen ? 'Exit fullscreen' : 'Enter fullscreen'} title="Fullscreen (F)">
+                            {videoState.fullscreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="video-player-shortcuts" aria-hidden="true">SPACE Play/Pause <span>← / → Seek 10s</span> M Mute <span>F Fullscreen</span></div>
+                  </>
+                )}
+              </section>
+            );
+          })()}
 
           {/* Interactive Quiz Engine (if type === 'quiz') */}
           {currentLesson?.type === 'quiz' && currentLesson.quiz && (
