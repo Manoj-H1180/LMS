@@ -33,8 +33,8 @@ import { soundFX } from './utils/soundEffects';
 export default function App() {
   const [mounted, setMounted] = useState(false);
   const [authedUser, setAuthedUser] = useState(null); // null = not logged in yet
-  const [user, setUser] = useState(() => loadUser());
-  const [courses, setCourses] = useState(() => loadCourses());
+  const [user, setUser] = useState(DEFAULT_USER);
+  const [courses, setCourses] = useState([]);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [activeCourse, setActiveCourse] = useState(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -43,19 +43,23 @@ export default function App() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   useEffect(() => {
-    setMounted(true);
     let cancelled = false;
+    setUser(loadUser());
+    setCourses(loadCourses());
+    setMounted(true);
 
     // Verify the session once, then load only that account's course list.
-    checkServerSession().then(async serverUser => {
-      if (cancelled || !serverUser) return;
-      setActiveAccountCache(serverUser.username);
-      setAuthedUser(serverUser);
-      setUser({ ...DEFAULT_USER, ...serverUser });
+    checkServerSession()
+      .then(async serverUser => {
+        if (cancelled || !serverUser) return;
+        setActiveAccountCache(serverUser.username);
+        setAuthedUser(serverUser);
+        setUser({ ...DEFAULT_USER, ...serverUser });
 
-      const diskCourses = await fetchCoursesFromDisk();
-      if (!cancelled && Array.isArray(diskCourses)) setCourses(diskCourses);
-    });
+        const diskCourses = await fetchCoursesFromDisk();
+        if (!cancelled && Array.isArray(diskCourses)) setCourses(diskCourses);
+      })
+      .catch(error => console.error('App session initialization failed:', error));
 
     return () => { cancelled = true; };
   }, []);

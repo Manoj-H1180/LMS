@@ -1,5 +1,10 @@
 import App from '../App';
+import AppErrorBoundary from '../components/AppErrorBoundary';
 
 export default function Page() {
-  return <App />;
+  return (
+    <AppErrorBoundary>
+      <App />
+    </AppErrorBoundary>
+  );
 }
