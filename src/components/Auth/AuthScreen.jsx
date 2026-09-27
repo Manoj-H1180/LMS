@@ -5,7 +5,7 @@ import { Eye, EyeOff, LogIn, UserPlus, Sparkles, BookOpen } from 'lucide-react';
 
 const AVATARS = ['🎓', '👨‍💻', '👩‍💻', '🧑‍🎨', '🧑‍🔬', '🧙', '🦊', '🐉', '🚀', '⚡', '🌟', '🔥'];
 
-// SQLite-backed session verification
+// Neon Postgres-backed session verification
 export async function checkServerSession() {
   try {
     const res = await fetch('/api/auth');
@@ -14,7 +14,7 @@ export async function checkServerSession() {
       return data.user;
     }
   } catch (e) {
-    console.warn('SQLite session check failed:', e);
+    console.warn('Session check failed:', e);
   }
   return null;
 }
@@ -27,7 +27,7 @@ export async function clearSession() {
       body: JSON.stringify({ action: 'logout' })
     });
   } catch (e) {
-    console.warn('SQLite logout failed:', e);
+    console.warn('Logout request failed:', e);
   }
 }
 
@@ -64,7 +64,7 @@ export default function AuthScreen({ onAuthenticated }) {
 
       onAuthenticated(data.user);
     } catch {
-      setError('Unable to reach SQLite server. Please ensure the server is running.');
+      setError('Unable to reach the learning server. Please try again in a moment.');
     } finally {
       setIsLoading(false);
     }
@@ -101,7 +101,7 @@ export default function AuthScreen({ onAuthenticated }) {
 
       onAuthenticated(data.user);
     } catch {
-      setError('Unable to reach SQLite server. Please ensure the server is running.');
+      setError('Unable to reach the learning server. Please try again in a moment.');
     } finally {
       setIsLoading(false);
     }
@@ -307,7 +307,7 @@ export default function AuthScreen({ onAuthenticated }) {
         </div>
 
         <p style={{ textAlign: 'center', marginTop: '14px', fontSize: '0.73rem', color: 'var(--text-dim)' }}>
-          💾 All accounts, courses & progress stored in SQLite on disk.
+          ☁️ Accounts, courses & learning progress sync securely to your account.
         </p>
       </div>
     </div>

@@ -57,7 +57,19 @@ function getDb() {
 // Schema bootstrapping — call once at startup or from an API route
 // ---------------------------------------------------------------------------
 
+let schemaSetupPromise;
+
 export async function ensureTables() {
+  if (!schemaSetupPromise) {
+    schemaSetupPromise = createTablesAndMigrate().catch(error => {
+      schemaSetupPromise = null;
+      throw error;
+    });
+  }
+  return schemaSetupPromise;
+}
+
+async function createTablesAndMigrate() {
   const sql = getDb();
 
   await sql`

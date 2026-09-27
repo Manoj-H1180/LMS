@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { getAllLeaderboardUsers, getUserBySession, getWeeklyLessonActivity } from '../../../lib/db';
+import { getAllLeaderboardUsers, getUserBySession, getWeeklyLessonActivity, ensureTables } from '../../../lib/db';
 
 export async function GET(request) {
   try {
+    await ensureTables();
     const { searchParams } = new URL(request.url);
     const token = (await cookies()).get('lms_session')?.value;
     const sessionUser = token ? await getUserBySession(token) : null;

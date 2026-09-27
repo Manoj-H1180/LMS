@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { getUser, upsertUser, getUserBySession, saveAuthenticatedUserUpdates } from '../../../lib/db';
+import { getUser, upsertUser, getUserBySession, saveAuthenticatedUserUpdates, ensureTables } from '../../../lib/db';
 
 const DEFAULT_USER = {
   username: 'default_learner',
@@ -29,6 +29,7 @@ async function getSessionUser() {
 
 export async function GET() {
   try {
+    await ensureTables();
     const sessionUser = await getSessionUser();
     if (!sessionUser) return NextResponse.json({ success: false, error: 'Authentication required' }, { status: 401 });
     const username = sessionUser.username;
@@ -47,6 +48,7 @@ export async function GET() {
 
 export async function POST(request) {
   try {
+    await ensureTables();
     const updatedData = await request.json();
     if (!updatedData || typeof updatedData !== 'object') {
       return NextResponse.json({ success: false, error: 'Invalid user payload' }, { status: 400 });

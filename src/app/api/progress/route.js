@@ -4,7 +4,8 @@ import {
   getCourseProgress, 
   getAllUserCourseProgress, 
   saveCourseProgress, 
-  getUserBySession 
+  getUserBySession,
+  ensureTables
 } from '../../../lib/db';
 
 async function resolveUsername() {
@@ -19,6 +20,7 @@ async function resolveUsername() {
 
 export async function GET(request) {
   try {
+    await ensureTables();
     const { searchParams } = new URL(request.url);
     const courseId = searchParams.get('courseId');
     const username = await resolveUsername();
@@ -52,6 +54,7 @@ export async function GET(request) {
 
 export async function POST(request) {
   try {
+    await ensureTables();
     const body = await request.json();
     const { courseId, lastLessonId, playbackTime, completedLessons, quizScores, notes, lessonCompletedAt, progressPercent, completed } = body;
 

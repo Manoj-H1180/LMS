@@ -4,7 +4,8 @@ import {
   getAllCourses, 
   upsertCourse, 
   deleteOwnedCourse,
-  getUserBySession
+  getUserBySession,
+  ensureTables
 } from '../../../lib/db';
 
 async function requireSession() {
@@ -14,6 +15,7 @@ async function requireSession() {
 
 export async function GET() {
   try {
+    await ensureTables();
     const owner = await requireSession();
     const courses = await getAllCourses(owner?.username);
     return NextResponse.json({ success: true, count: courses.length, courses });
@@ -25,6 +27,7 @@ export async function GET() {
 
 export async function POST(request) {
   try {
+    await ensureTables();
     const owner = await requireSession();
     if (!owner) return NextResponse.json({ success: false, error: 'Authentication required' }, { status: 401 });
     const body = await request.json();
@@ -48,6 +51,7 @@ export async function POST(request) {
 
 export async function DELETE(request) {
   try {
+    await ensureTables();
     const owner = await requireSession();
     if (!owner) return NextResponse.json({ success: false, error: 'Authentication required' }, { status: 401 });
     const { searchParams } = new URL(request.url);

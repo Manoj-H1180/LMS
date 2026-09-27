@@ -9,7 +9,8 @@ import {
   deleteSession,
   hashPassword,
   verifyPassword,
-  updatePassword
+  updatePassword,
+  ensureTables
 } from '../../../lib/db';
 
 const SESSION_COOKIE_NAME = 'lms_session';
@@ -18,6 +19,7 @@ const COOKIE_MAX_AGE = 60 * 60 * 24 * 30; // 30 days
 // GET /api/auth — Validate active session from Neon Postgres
 export async function GET(request) {
   try {
+    await ensureTables();
     const cookieStore = await cookies();
     const tokenFromCookie = cookieStore.get(SESSION_COOKIE_NAME)?.value;
     
@@ -45,6 +47,7 @@ export async function GET(request) {
 // POST /api/auth — Login, Signup, or Logout
 export async function POST(request) {
   try {
+    await ensureTables();
     const body = await request.json();
     const { action, username, password, displayName, avatar } = body;
 
