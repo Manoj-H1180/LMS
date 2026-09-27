@@ -41,8 +41,9 @@ export default function CoursePlayerView({
   onBack 
 }) {
   // Flatten all lessons for navigation
-  const allLessons = (course.modules || []).flatMap((mod, moduleIndex) =>
-    (mod.lessons || []).map((lesson, lessonIndex) => ({
+  const courseModules = (Array.isArray(course.modules) ? course.modules : []).filter(Boolean);
+  const allLessons = courseModules.flatMap((mod, moduleIndex) =>
+    (Array.isArray(mod.lessons) ? mod.lessons : []).filter(Boolean).map((lesson, lessonIndex) => ({
       ...lesson,
       moduleTitle: mod.title,
       moduleIndex,
@@ -460,9 +461,10 @@ export default function CoursePlayerView({
           </div>
 
           <div style={{ padding: '12px', flex: 1, display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            {course.modules?.map((mod, mIdx) => {
+            {courseModules.map((mod, mIdx) => {
               const isExpanded = expandedModules[mIdx] !== false;
-              const moduleLessonsCompleted = mod.lessons?.filter(l => user.completedLessons?.includes(l.id))?.length || 0;
+              const moduleLessons = (Array.isArray(mod.lessons) ? mod.lessons : []).filter(Boolean);
+              const moduleLessonsCompleted = moduleLessons.filter(l => user.completedLessons?.includes(l.id)).length;
 
               return (
                 <div 
@@ -491,7 +493,7 @@ export default function CoursePlayerView({
                         {mod.title}
                       </span>
                       <span style={{ fontSize: '0.72rem', color: 'var(--text-dim)' }}>
-                        {moduleLessonsCompleted}/{mod.lessons?.length || 0} completed
+                        {moduleLessonsCompleted}/{moduleLessons.length} completed
                       </span>
                     </div>
                     {isExpanded ? <ChevronDown size={16} color="var(--text-dim)" /> : <ChevronRight size={16} color="var(--text-dim)" />}
@@ -500,7 +502,7 @@ export default function CoursePlayerView({
                   {/* Lessons List in Module */}
                   {isExpanded && (
                     <div style={{ display: 'flex', flexDirection: 'column', padding: '6px' }}>
-                      {mod.lessons?.map(les => {
+                      {moduleLessons.map(les => {
                         const isSelected = les.id === currentLessonId;
                         const isDone = user.completedLessons?.includes(les.id);
 
@@ -542,7 +544,7 @@ export default function CoursePlayerView({
                                   {les.type === 'video' && <Video size={11} />}
                                   {les.type === 'quiz' && <Brain size={11} />}
                                   {les.type === 'markdown' && <FileText size={11} />}
-                                  {les.duration || '10 min'}
+                                  {les?.duration || '10 min'}
                                 </span>
                               </div>
                             </div>
