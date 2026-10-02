@@ -32,6 +32,7 @@ import {
 import { soundFX } from '../../utils/soundEffects';
 import { triggerConfetti } from '../../utils/confettiHelper';
 import { fetchCourseProgressFromDisk, saveCourseProgressToDisk } from '../../utils/storage';
+import { saveVideoHandle, restoreVideoFromHandle } from '../../utils/videoFileHandles';
 import CertificateModal from '../Certificate/CertificateModal';
 
 export default function CoursePlayerView({ 
@@ -99,6 +100,24 @@ export default function CoursePlayerView({
       Object.values(localBlobUrlsRef.current).forEach(url => URL.revokeObjectURL(url));
     };
   }, []);
+
+  // Auto-restore local video from saved FileSystemFileHandle when lesson changes
+  useEffect(() => {
+    if (!course.isImported) return;
+    const lesson = allLessons.find(l => l.id === currentLessonId);
+    if (!lesson || lesson.type !== 'video' || lesson.videoUrl) return;
+    // Only try to restore if we don't already have a blob URL for this lesson
+    if (localBlobUrls[currentLessonId]) return;
+
+    let cancelled = false;
+    restoreVideoFromHandle(currentLessonId).then(result => {
+      if (cancelled || !result) return;
+      setLocalBlobUrls(prev => ({ ...prev, [currentLessonId]: result.blobUrl }));
+      setVideoState(state => ({ ...state, error: '', currentTime: 0, duration: 0, paused: true }));
+    });
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentLessonId, course.isImported]);
 
   const currentLesson = allLessons.find(l => l.id === currentLessonId) || allLessons[0];
   const currentIndex = allLessons.findIndex(l => l.id === currentLessonId);
@@ -670,7 +689,7 @@ export default function CoursePlayerView({
             const isLocalMissingVideo = course.isImported && !resolvedVideoSrc;
             return (
               <section ref={playerShellRef} className="video-player-shell" aria-label={`Video lesson: ${currentLesson.title}`}>
-                {/* Hidden file input for re-selecting local video files */}
+                {/* Hidden file input — fallback for browsers without File System Access API */}
                 <input
                   ref={localVideoFileInputRef}
                   type="file"
@@ -680,15 +699,15 @@ export default function CoursePlayerView({
                   onChange={event => {
                     const file = event.target.files?.[0];
                     if (!file) return;
-                    // Revoke previous blob URL for this lesson if any
                     if (localBlobUrls[currentLesson.id]) {
                       URL.revokeObjectURL(localBlobUrls[currentLesson.id]);
                     }
                     const newBlobUrl = URL.createObjectURL(file);
                     setLocalBlobUrls(prev => ({ ...prev, [currentLesson.id]: newBlobUrl }));
                     setVideoState(state => ({ ...state, error: '', currentTime: 0, duration: 0, paused: true }));
-                    // Reset the input so the same file can be re-selected if needed
                     event.target.value = '';
+                    // Note: plain <input> does not give a FileSystemFileHandle, so the
+                    // path cannot be persisted. The user will need to pick again next session.
                   }}
                 />
 
@@ -706,8 +725,32 @@ export default function CoursePlayerView({
                       </p>
                       <button
                         className="local-video-load-btn"
-                        onClick={() => localVideoFileInputRef.current?.click()}
                         aria-label="Select local video file for this lesson"
+                        onClick={async () => {
+                          if ('showOpenFilePicker' in window) {
+                            try {
+                              const [handle] = await window.showOpenFilePicker({
+                                types: [{ description: 'Video files', accept: { 'video/*': ['.mp4', '.webm', '.mov', '.mkv', '.avi', '.m4v', '.ogv'] } }],
+                                multiple: false,
+                              });
+                              const file = await handle.getFile();
+                              if (localBlobUrls[currentLesson.id]) URL.revokeObjectURL(localBlobUrls[currentLesson.id]);
+                              const newBlobUrl = URL.createObjectURL(file);
+                              setLocalBlobUrls(prev => ({ ...prev, [currentLesson.id]: newBlobUrl }));
+                              setVideoState(state => ({ ...state, error: '', currentTime: 0, duration: 0, paused: true }));
+                              // Persist the handle so the video auto-loads next time
+                              saveVideoHandle(currentLesson.id, handle);
+                            } catch (err) {
+                              if (err?.name !== 'AbortError') {
+                                // API failed — fall back to plain input
+                                localVideoFileInputRef.current?.click();
+                              }
+                            }
+                          } else {
+                            // Browser doesn't support File System Access API
+                            localVideoFileInputRef.current?.click();
+                          }
+                        }}
                       >
                         <Video size={16} />
                         Select Video File
@@ -802,11 +845,28 @@ export default function CoursePlayerView({
                         {course.isImported && (
                           <button
                             className="video-reload-local-btn"
-                            onClick={() => {
-                              setVideoState(s => ({ ...s, error: '' }));
-                              localVideoFileInputRef.current?.click();
-                            }}
                             style={{ marginLeft: 12, padding: '4px 12px', borderRadius: 6, background: 'rgba(56,189,248,0.15)', border: '1px solid rgba(56,189,248,0.4)', color: '#38bdf8', cursor: 'pointer', fontSize: '0.8rem' }}
+                            onClick={async () => {
+                              setVideoState(s => ({ ...s, error: '' }));
+                              if ('showOpenFilePicker' in window) {
+                                try {
+                                  const [handle] = await window.showOpenFilePicker({
+                                    types: [{ description: 'Video files', accept: { 'video/*': ['.mp4', '.webm', '.mov', '.mkv', '.avi', '.m4v', '.ogv'] } }],
+                                    multiple: false,
+                                  });
+                                  const file = await handle.getFile();
+                                  if (localBlobUrls[currentLesson.id]) URL.revokeObjectURL(localBlobUrls[currentLesson.id]);
+                                  const newBlobUrl = URL.createObjectURL(file);
+                                  setLocalBlobUrls(prev => ({ ...prev, [currentLesson.id]: newBlobUrl }));
+                                  setVideoState(state => ({ ...state, error: '', currentTime: 0, duration: 0, paused: true }));
+                                  saveVideoHandle(currentLesson.id, handle);
+                                } catch (err) {
+                                  if (err?.name !== 'AbortError') localVideoFileInputRef.current?.click();
+                                }
+                              } else {
+                                localVideoFileInputRef.current?.click();
+                              }
+                            }}
                           >
                             Select file…
                           </button>
@@ -817,9 +877,28 @@ export default function CoursePlayerView({
                     {course.isImported && localBlobUrls[currentLesson.id] && !videoState.error && (
                       <button
                         className="local-video-change-btn"
-                        onClick={() => localVideoFileInputRef.current?.click()}
                         title="Select a different video file"
                         aria-label="Select a different local video file"
+                        onClick={async () => {
+                          if ('showOpenFilePicker' in window) {
+                            try {
+                              const [handle] = await window.showOpenFilePicker({
+                                types: [{ description: 'Video files', accept: { 'video/*': ['.mp4', '.webm', '.mov', '.mkv', '.avi', '.m4v', '.ogv'] } }],
+                                multiple: false,
+                              });
+                              const file = await handle.getFile();
+                              if (localBlobUrls[currentLesson.id]) URL.revokeObjectURL(localBlobUrls[currentLesson.id]);
+                              const newBlobUrl = URL.createObjectURL(file);
+                              setLocalBlobUrls(prev => ({ ...prev, [currentLesson.id]: newBlobUrl }));
+                              setVideoState(state => ({ ...state, error: '', currentTime: 0, duration: 0, paused: true }));
+                              saveVideoHandle(currentLesson.id, handle);
+                            } catch (err) {
+                              if (err?.name !== 'AbortError') localVideoFileInputRef.current?.click();
+                            }
+                          } else {
+                            localVideoFileInputRef.current?.click();
+                          }
+                        }}
                       >
                         <Video size={13} /> Change file
                       </button>
