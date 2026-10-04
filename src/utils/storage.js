@@ -51,6 +51,8 @@ export const DEFAULT_USER = {
   inventory: ['theme_cyberpunk'],
   activeTheme: 'cyberpunk',
   lessonNotes: {},
+  importantLessons: [],
+  courseHighlights: {},
   soundEnabled: true
 };
 

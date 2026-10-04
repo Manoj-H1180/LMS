@@ -22,6 +22,7 @@ export default function Sidebar({
   setActiveTab, 
   coursesCount, 
   enrolledCount,
+  notesCount,
   mobileOpen = false,
   onCloseMobile
 }) {
@@ -30,7 +31,7 @@ export default function Sidebar({
     { id: 'execution_lab', label: 'Execution Lab', icon: Cpu, badge: 'NEW' },
     { id: 'courses', label: 'Explore Courses', icon: Compass, badge: coursesCount },
     { id: 'my_learning', label: 'My Learning', icon: GraduationCap, badge: enrolledCount > 0 ? enrolledCount : null },
-    { id: 'notes', label: 'Study Notes', icon: Book },
+    { id: 'notes', label: 'Study Notes', icon: Book, badge: notesCount || null },
     { id: 'import', label: 'Local Course Import', icon: FolderInput, highlight: true },
     { id: 'studio', label: 'Course Studio', icon: PlusCircle },
     { id: 'leaderboard', label: 'Leaderboard', icon: Trophy },

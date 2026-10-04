@@ -205,6 +205,24 @@ export default function CoursePlayerScreen({ route, navigation, user, onUpdateUs
   }, [activeLesson, note, user, onUpdateUser]);
 
   const isLessonDone = activeLesson ? completedLessons.includes(activeLesson.id) : false;
+  const isLessonImportant = activeLesson ? (user.importantLessons || []).includes(activeLesson.id) : false;
+
+  const toggleImportant = useCallback(async () => {
+    if (!activeLesson) return;
+    const existing = user.importantLessons || [];
+    const isAlready = existing.includes(activeLesson.id);
+    const updated = isAlready ? existing.filter(id => id !== activeLesson.id) : [...existing, activeLesson.id];
+    const updatedUser = {
+      ...user,
+      importantLessons: updated
+    };
+    onUpdateUser(updatedUser);
+    await saveUser({ ...updatedUser, username: user.username });
+    Alert.alert(
+      isAlready ? 'Removed' : '⭐ Marked as Important',
+      isAlready ? 'Lesson unpinned from your Important list.' : 'This lesson is marked as Important for exam review.'
+    );
+  }, [activeLesson, user, onUpdateUser]);
 
   return (
     <View style={styles.root}>
@@ -247,8 +265,30 @@ export default function CoursePlayerScreen({ route, navigation, user, onUpdateUs
             <>
               {/* Lesson Header */}
               <View style={styles.lessonHeader}>
-                <Text style={styles.lessonTitleLg}>{activeLesson.title}</Text>
-                <Text style={styles.lessonMetaLg}>{activeLesson.type} · {activeLesson.duration}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.lessonTitleLg}>{activeLesson.title}</Text>
+                  <Text style={styles.lessonMetaLg}>{activeLesson.type} · {activeLesson.duration}</Text>
+                </View>
+
+                {/* Mark as Important Button */}
+                <TouchableOpacity
+                  onPress={toggleImportant}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 4,
+                    paddingHorizontal: 10,
+                    paddingVertical: 6,
+                    borderRadius: 16,
+                    backgroundColor: isLessonImportant ? 'rgba(245, 158, 11, 0.2)' : 'rgba(255, 255, 255, 0.06)',
+                    borderWidth: 1,
+                    borderColor: isLessonImportant ? '#f59e0b' : 'rgba(255, 255, 255, 0.1)'
+                  }}
+                >
+                  <Text style={{ fontSize: 13, color: isLessonImportant ? '#fbbf24' : '#94a3b8', fontWeight: '700' }}>
+                    {isLessonImportant ? '★ Important' : '☆ Mark Important'}
+                  </Text>
+                </TouchableOpacity>
               </View>
 
               {/* View Tabs */}
@@ -275,10 +315,10 @@ export default function CoursePlayerScreen({ route, navigation, user, onUpdateUs
                       </Text>
                     </View>
                   )}
-                  {activeLesson.content && (
-                    <Text style={styles.contentText}>{activeLesson.content}</Text>
+                  {(activeLesson.contentMarkdown || activeLesson.content) && (
+                    <Text style={styles.contentText}>{activeLesson.contentMarkdown || activeLesson.content}</Text>
                   )}
-                  {!activeLesson.content && !activeLesson.videoUrl && (
+                  {!activeLesson.contentMarkdown && !activeLesson.content && !activeLesson.videoUrl && (
                     <Text style={styles.contentText}>No content available for this lesson.</Text>
                   )}
 
@@ -300,7 +340,35 @@ export default function CoursePlayerScreen({ route, navigation, user, onUpdateUs
               {/* Notes View */}
               {activeView === 'notes' && (
                 <View style={styles.contentCard}>
-                  <Text style={styles.notesHint}>📝 Personal notes for this lesson</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                    <Text style={styles.notesHint}>📝 Personal notes for this lesson</Text>
+                    {isLessonImportant && (
+                      <Text style={{ fontSize: 11, color: '#fbbf24', fontWeight: '700' }}>⭐ High Priority</Text>
+                    )}
+                  </View>
+
+                  {/* Quick Template Buttons */}
+                  <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
+                    <TouchableOpacity
+                      onPress={() => setNote(prev => (prev ? prev + '\n\n' : '') + '> ⭐ IMPORTANT: ')}
+                      style={{ paddingHorizontal: 10, paddingVertical: 4, backgroundColor: 'rgba(245, 158, 11, 0.15)', borderRadius: 12 }}
+                    >
+                      <Text style={{ fontSize: 11, color: '#fbbf24', fontWeight: '600' }}>⭐ Important</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => setNote(prev => (prev ? prev + '\n\n' : '') + '> 💡 KEY TAKEAWAY: ')}
+                      style={{ paddingHorizontal: 10, paddingVertical: 4, backgroundColor: 'rgba(16, 185, 129, 0.15)', borderRadius: 12 }}
+                    >
+                      <Text style={{ fontSize: 11, color: '#34d399', fontWeight: '600' }}>💡 Takeaway</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => setNote(prev => (prev ? prev + '\n\n' : '') + '> 📌 FORMULA: ')}
+                      style={{ paddingHorizontal: 10, paddingVertical: 4, backgroundColor: 'rgba(99, 102, 241, 0.15)', borderRadius: 12 }}
+                    >
+                      <Text style={{ fontSize: 11, color: '#c4b5fd', fontWeight: '600' }}>📌 Formula</Text>
+                    </TouchableOpacity>
+                  </View>
+
                   <TextInput
                     style={styles.notesInput}
                     placeholder="Type your notes here…"

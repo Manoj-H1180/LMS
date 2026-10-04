@@ -166,6 +166,34 @@ class SoundFX {
       // ignore
     }
   }
+
+  // Sparkling chime when marking lesson or content as important
+  playStar() {
+    if (!this.enabled) return;
+    this.init();
+    if (!this.ctx) return;
+
+    try {
+      const notes = [659.25, 830.61, 987.77, 1318.51]; // E5, G#5, B5, E6
+      notes.forEach((freq, i) => {
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, this.ctx.currentTime + i * 0.055);
+
+        gain.gain.setValueAtTime(0.18, this.ctx.currentTime + i * 0.055);
+        gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + i * 0.055 + 0.22);
+
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+
+        osc.start(this.ctx.currentTime + i * 0.055);
+        osc.stop(this.ctx.currentTime + i * 0.055 + 0.25);
+      });
+    } catch {
+      // ignore
+    }
+  }
 }
 
 export const soundFX = new SoundFX();

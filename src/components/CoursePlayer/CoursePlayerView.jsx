@@ -27,14 +27,21 @@ import {
   Minimize2,
   RotateCcw,
   RotateCw,
-  AlertCircle
+  AlertCircle,
+  Star,
+  Highlighter,
+  Trash2,
+  Copy,
+  Plus
 } from 'lucide-react';
 import { soundFX } from '../../utils/soundEffects';
 import { triggerConfetti } from '../../utils/confettiHelper';
-import { fetchCourseProgressFromDisk, saveCourseProgressToDisk } from '../../utils/storage';
+import { fetchCourseProgressFromDisk, saveCourseProgressToDisk, saveUser } from '../../utils/storage';
 import { saveVideoHandle, restoreVideoFromHandle } from '../../utils/videoFileHandles';
 import CertificateModal from '../Certificate/CertificateModal';
 import CodingIDE from './CodingIDE';
+import CourseContentReader from './CourseContentReader';
+import NotionNotesEditor from '../Notes/NotionNotesEditor';
 
 export default function CoursePlayerView({ 
   course, 
@@ -74,6 +81,9 @@ export default function CoursePlayerView({
   const [showCodingIDE, setShowCodingIDE] = useState(false);
   const [showCertificate, setShowCertificate] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
+  const [notesTab, setNotesTab] = useState('notes'); // 'notes' | 'highlights'
+  const [syllabusFilter, setSyllabusFilter] = useState('all'); // 'all' | 'important' | 'completed'
+  const [copiedHighlightsAll, setCopiedHighlightsAll] = useState(false);
   const [currentNote, setCurrentNote] = useState('');
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
   const [videoState, setVideoState] = useState({ currentTime: 0, duration: 0, paused: true, volume: 1, muted: false, buffered: 0, error: '' });
@@ -125,6 +135,136 @@ export default function CoursePlayerView({
   const currentLesson = allLessons.find(l => l.id === currentLessonId) || allLessons[0];
   const currentIndex = allLessons.findIndex(l => l.id === currentLessonId);
   const isLessonCompleted = user.completedLessons?.includes(currentLesson?.id);
+
+  // Lesson importance & highlights
+  const isCurrentLessonImportant = (user.importantLessons || []).includes(currentLesson?.id) || false;
+  const lessonHighlights = (user.courseHighlights || {})[currentLesson?.id] || [];
+
+  const isLessonMarkedImportant = (lesId) => {
+    return (user.importantLessons || []).includes(lesId) || Boolean((user.courseHighlights || {})[lesId]?.some(h => h.isImportant || h.color === 'amber'));
+  };
+
+  const importantLessonsTotalCount = allLessons.filter(l => isLessonMarkedImportant(l.id)).length;
+
+  const handleToggleLessonImportant = (targetId = currentLesson?.id) => {
+    if (!targetId) return;
+    const existing = user.importantLessons || [];
+    const isAlready = existing.includes(targetId);
+    const updated = isAlready ? existing.filter(id => id !== targetId) : [...existing, targetId];
+
+    if (!isAlready) {
+      if (soundFX.playStar) soundFX.playStar();
+      else soundFX.playClick();
+    } else {
+      soundFX.playClick();
+    }
+
+    const updatedUser = {
+      ...user,
+      importantLessons: updated
+    };
+    onUpdateUser(updatedUser);
+    saveUser(updatedUser);
+  };
+
+  const handleAddHighlight = (newHl) => {
+    const lessonId = newHl.lessonId || currentLesson?.id;
+    const prevHighlights = user.courseHighlights || {};
+    const forThisLesson = prevHighlights[lessonId] || [];
+    const updatedLessonHighlights = [newHl, ...forThisLesson];
+    const updatedHighlights = {
+      ...prevHighlights,
+      [lessonId]: updatedLessonHighlights
+    };
+
+    let updatedImportant = user.importantLessons || [];
+    if (newHl.isImportant && !updatedImportant.includes(lessonId)) {
+      updatedImportant = [...updatedImportant, lessonId];
+    }
+
+    const updatedUser = {
+      ...user,
+      courseHighlights: updatedHighlights,
+      importantLessons: updatedImportant
+    };
+    onUpdateUser(updatedUser);
+    saveUser(updatedUser);
+  };
+
+  const handleRemoveHighlight = (hlId) => {
+    const lessonId = currentLesson?.id;
+    const prevHighlights = user.courseHighlights || {};
+    const forThisLesson = prevHighlights[lessonId] || [];
+    const updatedLessonHighlights = forThisLesson.filter(h => h.id !== hlId);
+    const updatedHighlights = {
+      ...prevHighlights,
+      [lessonId]: updatedLessonHighlights
+    };
+
+    const updatedUser = {
+      ...user,
+      courseHighlights: updatedHighlights
+    };
+    onUpdateUser(updatedUser);
+    saveUser(updatedUser);
+  };
+
+  const handleUpdateHighlight = (hlId, updates) => {
+    const lessonId = currentLesson?.id;
+    const prevHighlights = user.courseHighlights || {};
+    const forThisLesson = prevHighlights[lessonId] || [];
+    const updatedLessonHighlights = forThisLesson.map(h => h.id === hlId ? { ...h, ...updates } : h);
+    const updatedHighlights = {
+      ...prevHighlights,
+      [lessonId]: updatedLessonHighlights
+    };
+
+    const updatedUser = {
+      ...user,
+      courseHighlights: updatedHighlights
+    };
+    onUpdateUser(updatedUser);
+    saveUser(updatedUser);
+  };
+
+  const handleInsertTemplate = (prefix) => {
+    soundFX.playClick();
+    setCurrentNote(prev => {
+      const separator = prev && !prev.endsWith('\n') ? '\n\n' : '';
+      return `${prev}${separator}${prefix} `;
+    });
+  };
+
+  const handleImportHighlightsIntoNote = () => {
+    soundFX.playClick();
+    if (lessonHighlights.length === 0) return;
+    const highlightText = lessonHighlights.map((h) => {
+      const star = h.isImportant ? '⭐ ' : '📌 ';
+      const notePart = h.note ? `\n   *Note: ${h.note}*` : '';
+      return `${star}**${h.text}**${notePart}`;
+    }).join('\n\n');
+
+    setCurrentNote(prev => {
+      const separator = prev ? '\n\n---\n### 🌟 Highlights & Key Concepts\n' : '### 🌟 Highlights & Key Concepts\n';
+      return `${prev}${separator}${highlightText}\n`;
+    });
+  };
+
+  const handleCopyAllHighlightsSummary = () => {
+    if (lessonHighlights.length === 0) return;
+    soundFX.playClick();
+    const summary = `# 🌟 Key Concepts & Highlights — ${currentLesson.title}\n\n` +
+      lessonHighlights.map(h => {
+        const star = h.isImportant ? '⭐' : '•';
+        const note = h.note ? `\n  > 📝 ${h.note}` : '';
+        return `${star} "${h.text}"${note}`;
+      }).join('\n\n') +
+      (currentNote ? `\n\n## 📝 Lesson Study Notes\n${currentNote}` : '');
+
+    navigator.clipboard.writeText(summary);
+    setCopiedHighlightsAll(true);
+    setTimeout(() => setCopiedHighlightsAll(false), 2000);
+  };
 
   // Calculate course completion
   const totalLessonsCount = allLessons.length;
@@ -504,13 +644,53 @@ export default function CoursePlayerView({
             <span className="diploma-btn-text">Diploma</span>
           </button>
 
+          {/* Mark Lesson as Important Action in Top Bar */}
+          <button
+            onClick={() => handleToggleLessonImportant()}
+            className={`ghost-btn ${isCurrentLessonImportant ? 'topbar-important-active' : ''}`}
+            style={{
+              padding: '8px 12px',
+              fontSize: '0.85rem',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              color: isCurrentLessonImportant ? '#fbbf24' : 'var(--text-muted)',
+              borderColor: isCurrentLessonImportant ? 'rgba(245, 158, 11, 0.5)' : undefined,
+              background: isCurrentLessonImportant ? 'rgba(245, 158, 11, 0.15)' : undefined
+            }}
+            title={isCurrentLessonImportant ? 'Lesson marked as Important' : 'Mark this lesson as Important for study & revision'}
+          >
+            <Star size={16} fill={isCurrentLessonImportant ? '#fbbf24' : 'none'} color={isCurrentLessonImportant ? '#fbbf24' : 'currentColor'} />
+            <span className="diploma-btn-text">{isCurrentLessonImportant ? '★ Important' : 'Important'}</span>
+          </button>
+
           <button
             onClick={() => { soundFX.playClick(); setNotesOpen(!notesOpen); }}
             className="ghost-btn"
-            style={{ padding: '8px 12px' }}
-            title="Lesson Study Notes"
+            style={{ padding: '8px 12px', position: 'relative' }}
+            title="Lesson Study Notes & Highlights"
           >
             <Edit3 size={16} />
+            {lessonHighlights.length > 0 && (
+              <span style={{
+                position: 'absolute',
+                top: '-4px',
+                right: '-4px',
+                background: '#f59e0b',
+                color: '#000',
+                borderRadius: '9999px',
+                fontSize: '0.62rem',
+                fontWeight: '800',
+                width: '16px',
+                height: '16px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                boxShadow: '0 0 8px rgba(245, 158, 11, 0.5)'
+              }}>
+                {lessonHighlights.length}
+              </span>
+            )}
           </button>
         </div>
       </div>
@@ -544,11 +724,54 @@ export default function CoursePlayerView({
             </h3>
           </div>
 
+          {/* Syllabus Quick Filter Pills */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            padding: '8px 12px',
+            borderBottom: '1px solid var(--border-subtle)',
+            background: 'rgba(0, 0, 0, 0.15)',
+            overflowX: 'auto'
+          }}>
+            <button
+              onClick={() => setSyllabusFilter('all')}
+              className={`syllabus-filter-pill ${syllabusFilter === 'all' ? 'active' : ''}`}
+            >
+              All ({allLessons.length})
+            </button>
+            <button
+              onClick={() => setSyllabusFilter('important')}
+              className={`syllabus-filter-pill ${syllabusFilter === 'important' ? 'active' : ''}`}
+              style={{ color: syllabusFilter === 'important' ? '#fbbf24' : undefined }}
+            >
+              <Star size={11} fill={syllabusFilter === 'important' ? '#fbbf24' : 'none'} color="#fbbf24" />
+              Important ({importantLessonsTotalCount})
+            </button>
+            <button
+              onClick={() => setSyllabusFilter('completed')}
+              className={`syllabus-filter-pill ${syllabusFilter === 'completed' ? 'active' : ''}`}
+            >
+              Done ({completedInCourseCount})
+            </button>
+          </div>
+
           <div style={{ padding: '12px', flex: 1, display: 'flex', flexDirection: 'column', gap: '10px' }}>
             {courseModules.map((mod, mIdx) => {
               const isExpanded = expandedModules[mIdx] !== false;
-              const moduleLessons = (Array.isArray(mod.lessons) ? mod.lessons : []).filter(Boolean);
-              const moduleLessonsCompleted = moduleLessons.filter(l => user.completedLessons?.includes(l.id)).length;
+              const rawModuleLessons = (Array.isArray(mod.lessons) ? mod.lessons : []).filter(Boolean);
+              const moduleLessonsCompleted = rawModuleLessons.filter(l => user.completedLessons?.includes(l.id)).length;
+
+              // Filter lessons based on active filter
+              const moduleLessons = rawModuleLessons.filter(les => {
+                if (syllabusFilter === 'important') return isLessonMarkedImportant(les.id);
+                if (syllabusFilter === 'completed') return user.completedLessons?.includes(les.id);
+                return true;
+              });
+
+              if (moduleLessons.length === 0 && (syllabusFilter === 'important' || syllabusFilter === 'completed')) {
+                return null;
+              }
 
               return (
                 <div 
@@ -577,7 +800,7 @@ export default function CoursePlayerView({
                         {mod.title}
                       </span>
                       <span style={{ fontSize: '0.72rem', color: 'var(--text-dim)' }}>
-                        {moduleLessonsCompleted}/{moduleLessons.length} completed
+                        {moduleLessonsCompleted}/{rawModuleLessons.length} completed
                       </span>
                     </div>
                     {isExpanded ? <ChevronDown size={16} color="var(--text-dim)" /> : <ChevronRight size={16} color="var(--text-dim)" />}
@@ -589,6 +812,7 @@ export default function CoursePlayerView({
                       {moduleLessons.map(les => {
                         const isSelected = les.id === currentLessonId;
                         const isDone = user.completedLessons?.includes(les.id);
+                        const isLesImportant = isLessonMarkedImportant(les.id);
 
                         return (
                           <div
@@ -614,16 +838,23 @@ export default function CoursePlayerView({
                               )}
 
                               <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-                                <span style={{
-                                  fontSize: '0.82rem',
-                                  fontWeight: isSelected ? '700' : '500',
-                                  color: isSelected ? '#fff' : 'var(--text-muted)',
-                                  whiteSpace: 'nowrap',
-                                  overflow: 'hidden',
-                                  textOverflow: 'ellipsis'
-                                }}>
-                                  {les.title}
-                                </span>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                  {isLesImportant && (
+                                    <span title="Marked as Important / Has Highlights" style={{ display: 'inline-flex', flexShrink: 0 }}>
+                                      <Star size={12} fill="#fbbf24" color="#fbbf24" />
+                                    </span>
+                                  )}
+                                  <span style={{
+                                    fontSize: '0.82rem',
+                                    fontWeight: isSelected ? '700' : '500',
+                                    color: isSelected ? '#fff' : isLesImportant ? '#fef08a' : 'var(--text-muted)',
+                                    whiteSpace: 'nowrap',
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis'
+                                  }}>
+                                    {les.title}
+                                  </span>
+                                </div>
                                 <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', display: 'flex', alignItems: 'center', gap: '4px' }}>
                                   {les.type === 'video' && <Video size={11} />}
                                   {les.type === 'quiz' && <Brain size={11} />}
@@ -644,6 +875,12 @@ export default function CoursePlayerView({
                 </div>
               );
             })}
+            {syllabusFilter === 'important' && importantLessonsTotalCount === 0 && (
+              <div style={{ padding: '24px 14px', textAlign: 'center', color: 'var(--text-dim)', fontSize: '0.82rem' }}>
+                <Star size={24} color="#f59e0b" style={{ margin: '0 auto 8px', display: 'block', opacity: 0.5 }} />
+                No lessons marked as important yet. Click "Mark as Important" on any lesson or highlight text to review it here!
+              </div>
+            )}
           </div>
         </aside>
 
@@ -659,6 +896,18 @@ export default function CoursePlayerView({
                 }}>
                   {currentLesson?.type} lesson
                 </span>
+                {isCurrentLessonImportant && (
+                  <span className="badge-pill" style={{
+                    background: 'rgba(245, 158, 11, 0.2)',
+                    color: '#fbbf24',
+                    border: '1px solid rgba(245, 158, 11, 0.45)',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px'
+                  }}>
+                    <Star size={12} fill="#fbbf24" /> Important
+                  </span>
+                )}
                 <span style={{ fontSize: '0.78rem', color: 'var(--text-dim)' }}>
                   {currentLesson?.moduleTitle}
                 </span>
@@ -669,6 +918,30 @@ export default function CoursePlayerView({
             </div>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              {/* Prominent Mark as Important Button in Workspace Header */}
+              <button
+                onClick={() => handleToggleLessonImportant()}
+                className={`glow-btn-sm ${isCurrentLessonImportant ? 'mark-important-glow-active' : 'mark-important-ghost'}`}
+                style={{
+                  padding: '8px 14px',
+                  fontSize: '0.85rem',
+                  borderRadius: 'var(--radius-md)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s ease',
+                  background: isCurrentLessonImportant ? 'linear-gradient(135deg, rgba(245, 158, 11, 0.25), rgba(217, 119, 6, 0.35))' : 'rgba(255, 255, 255, 0.05)',
+                  border: isCurrentLessonImportant ? '1px solid #f59e0b' : '1px solid var(--border-subtle)',
+                  color: isCurrentLessonImportant ? '#fbbf24' : 'var(--text-muted)',
+                  boxShadow: isCurrentLessonImportant ? '0 0 16px rgba(245, 158, 11, 0.35)' : 'none'
+                }}
+                title={isCurrentLessonImportant ? 'Lesson marked as Important' : 'Mark as Important for Exam Review'}
+              >
+                <Star size={16} fill={isCurrentLessonImportant ? '#fbbf24' : 'none'} color={isCurrentLessonImportant ? '#fbbf24' : 'currentColor'} />
+                <span>{isCurrentLessonImportant ? '★ Important' : 'Mark as Important'}</span>
+              </button>
+
               <button
                 onClick={handleCompleteLesson}
                 className={isLessonCompleted ? 'ghost-btn' : 'glow-btn'}
@@ -1118,22 +1391,23 @@ export default function CoursePlayerView({
             </div>
           )}
 
-          {/* Markdown & Text Lesson Content */}
-          {currentLesson?.contentMarkdown && (
-            <div className="glass-panel" style={{ padding: '30px' }}>
-              <div 
-                style={{ 
-                  color: '#e2e8f0', 
-                  fontSize: '0.95rem', 
-                  lineHeight: 1.7,
-                  whiteSpace: 'pre-wrap',
-                  fontFamily: 'var(--font-main)'
-                }}
-              >
-                {currentLesson.contentMarkdown}
-              </div>
-            </div>
-          )}
+          {/* Course Content Reader with Interactive Highlighting & Mark as Important */}
+          <div style={{ marginTop: '16px', marginBottom: '14px' }}>
+            <CourseContentReader
+              content={currentLesson?.contentMarkdown || ''}
+              lesson={currentLesson}
+              highlights={lessonHighlights}
+              onAddHighlight={handleAddHighlight}
+              onRemoveHighlight={handleRemoveHighlight}
+              onUpdateHighlight={handleUpdateHighlight}
+              isLessonImportant={isCurrentLessonImportant}
+              onToggleLessonImportant={handleToggleLessonImportant}
+              onOpenNotes={(tab = 'notes') => {
+                setNotesOpen(true);
+                setNotesTab(tab);
+              }}
+            />
+          </div>
 
           {/* ─── Coding IDE & Concept Visualizer ───────────────── */}
           <div style={{ marginTop: '8px' }}>
@@ -1285,53 +1559,159 @@ export default function CoursePlayerView({
           </div>
         </main>
 
-        {/* Right Slide-out Notes Scratchpad Drawer */}
+        {/* Right Slide-out Notes & Highlights Scratchpad Drawer */}
         {notesOpen && (
           <aside style={{
-            width: '320px',
+            width: '420px',
+            maxWidth: '100%',
             background: 'var(--bg-secondary)',
             borderLeft: '1px solid var(--border-subtle)',
             display: 'flex',
             flexDirection: 'column',
-            padding: '20px',
-            gap: '14px'
+            padding: '18px',
+            gap: '12px',
+            overflowY: 'auto'
           }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '10px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <Edit3 size={17} color="var(--accent-primary)" />
-                <h3 style={{ fontSize: '1rem' }}>Study Notes</h3>
+                <h3 style={{ fontSize: '1rem', color: '#fff' }}>Study Notes & Highlights</h3>
               </div>
               <button onClick={() => setNotesOpen(false)} className="ghost-btn" style={{ padding: '4px 8px' }}>
                 ✕
               </button>
             </div>
 
-            <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-              Notes save automatically and stay linked to this lesson.
-            </p>
+            {/* Sub-tabs: Lesson Notes vs Highlights */}
+            <div className="notes-drawer-tabs">
+              <button
+                onClick={() => setNotesTab('notes')}
+                className={`notes-tab-btn ${notesTab === 'notes' ? 'active' : ''}`}
+              >
+                <Edit3 size={13} />
+                <span>Lesson Notes</span>
+              </button>
+              <button
+                onClick={() => setNotesTab('highlights')}
+                className={`notes-tab-btn ${notesTab === 'highlights' ? 'active' : ''}`}
+              >
+                <Star size={13} fill={lessonHighlights.length > 0 ? '#fbbf24' : 'none'} color="#fbbf24" />
+                <span>Highlights ({lessonHighlights.length})</span>
+              </button>
+            </div>
 
-            <textarea
-              rows={12}
-              value={currentNote}
-              onChange={(e) => setCurrentNote(e.target.value)}
-              placeholder="Take notes, record key concepts, code snippets, or ideas..."
-              style={{
-                flex: 1,
-                padding: '12px',
-                background: 'rgba(0, 0, 0, 0.3)',
-                border: '1px solid var(--border-subtle)',
-                borderRadius: 'var(--radius-md)',
-                color: '#fff',
-                fontSize: '0.88rem',
-                lineHeight: 1.5,
-                resize: 'none'
-              }}
-            />
+            {notesTab === 'notes' ? (
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+                <NotionNotesEditor
+                  key={currentLesson.id}
+                  initialMarkdown={currentNote}
+                  onChange={(newMarkdown) => setCurrentNote(newMarkdown)}
+                  onSave={(newMarkdown) => {
+                    setCurrentNote(newMarkdown);
+                    handleSaveNote();
+                  }}
+                  lessonTitle={currentLesson?.title || 'Lesson Notes'}
+                  courseTitle={course?.title || ''}
+                  isImportant={isCurrentLessonImportant}
+                  onToggleImportant={handleToggleLessonImportant}
+                  compact={true}
+                />
 
-            <button onClick={handleSaveNote} className="glow-btn" style={{ width: '100%' }}>
-              <Save size={16} />
-              Save Study Notes
-            </button>
+                {lessonHighlights.length > 0 && (
+                  <button
+                    onClick={handleImportHighlightsIntoNote}
+                    className="ghost-btn"
+                    style={{ fontSize: '0.78rem', justifyContent: 'center', gap: '6px', marginTop: '12px' }}
+                  >
+                    <Highlighter size={13} color="#f59e0b" />
+                    <span>Import {lessonHighlights.length} Highlights into Note</span>
+                  </button>
+                )}
+              </div>
+            ) : (
+              /* Highlights tab */
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', flex: 1 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span style={{ fontSize: '0.78rem', color: 'var(--text-dim)' }}>
+                    {lessonHighlights.length} marked {lessonHighlights.length === 1 ? 'excerpt' : 'excerpts'}
+                  </span>
+                  {lessonHighlights.length > 0 && (
+                    <button
+                      onClick={handleCopyAllHighlightsSummary}
+                      className="ghost-btn"
+                      style={{ padding: '4px 8px', fontSize: '0.72rem', gap: '4px' }}
+                    >
+                      {copiedHighlightsAll ? <Check size={12} color="#10b981" /> : <Copy size={12} />}
+                      <span>{copiedHighlightsAll ? 'Copied!' : 'Copy Summary'}</span>
+                    </button>
+                  )}
+                </div>
+
+                {lessonHighlights.length > 0 ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', overflowY: 'auto', maxHeight: '420px', paddingRight: '4px' }}>
+                    {lessonHighlights.map(hl => {
+                      const isImp = hl.isImportant || hl.color === 'amber';
+                      const colorBorder = hl.color === 'emerald' ? '#10b981' : hl.color === 'cyan' ? '#06b6d4' : hl.color === 'purple' ? '#a855f7' : hl.color === 'rose' ? '#f43f5e' : '#f59e0b';
+                      return (
+                        <div
+                          key={hl.id}
+                          className="drawer-highlight-card"
+                          style={{ borderLeft: `3px solid ${colorBorder}` }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+                            <span style={{ fontSize: '0.72rem', fontWeight: '700', color: isImp ? '#fbbf24' : 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              {isImp && <Star size={11} fill="#fbbf24" />}
+                              {isImp ? 'Important Concept' : 'Key Takeaway'}
+                            </span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              <button
+                                onClick={() => {
+                                  navigator.clipboard.writeText(hl.text);
+                                  soundFX.playClick();
+                                }}
+                                className="ghost-btn"
+                                style={{ padding: '2px 5px', fontSize: '0.7rem' }}
+                                title="Copy quote"
+                              >
+                                <Copy size={11} />
+                              </button>
+                              <button
+                                onClick={() => handleRemoveHighlight(hl.id)}
+                                className="ghost-btn"
+                                style={{ padding: '2px 5px', fontSize: '0.7rem', color: '#f43f5e' }}
+                                title="Remove highlight"
+                              >
+                                <Trash2 size={11} />
+                              </button>
+                            </div>
+                          </div>
+
+                          <div style={{ fontSize: '0.82rem', color: '#f1f5f9', fontStyle: 'italic', marginBottom: hl.note ? '6px' : '0', lineHeight: 1.4 }}>
+                            "{hl.text}"
+                          </div>
+
+                          {hl.note && (
+                            <div style={{ fontSize: '0.76rem', color: '#fbbf24', background: 'rgba(245, 158, 11, 0.1)', padding: '4px 8px', borderRadius: '4px' }}>
+                              📝 {hl.note}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div style={{ padding: '28px 16px', textAlign: 'center', background: 'rgba(255, 255, 255, 0.02)', borderRadius: 'var(--radius-md)', border: '1px dashed var(--border-subtle)' }}>
+                    <Highlighter size={28} color="var(--text-dim)" style={{ margin: '0 auto 10px', display: 'block', opacity: 0.6 }} />
+                    <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginBottom: '8px' }}>
+                      No highlights yet.
+                    </p>
+                    <p style={{ fontSize: '0.74rem', color: 'var(--text-dim)' }}>
+                      Select any text in the reading area and click <strong>"⭐ Mark Important"</strong> or choose a highlight color.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
           </aside>
         )}
       </div>

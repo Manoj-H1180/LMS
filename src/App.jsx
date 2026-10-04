@@ -16,6 +16,7 @@ import CourseCard from './components/CourseCard';
 import AuthScreen, { checkServerSession, clearSession } from './components/Auth/AuthScreen';
 import MobileBottomNav from './components/MobileBottomNav';
 import ExecutionLabView from './components/ExecutionLab/ExecutionLabView';
+import StudyNotesView from './components/StudyNotes/StudyNotesView';
 
 import { 
   loadUser, 
@@ -245,6 +246,7 @@ export default function App() {
           }}
           coursesCount={courses.length}
           enrolledCount={enrolledCourses.length}
+          notesCount={(user.importantLessons?.length || 0) > 0 ? `⭐ ${user.importantLessons.length}` : (Object.keys(user.lessonNotes || {}).filter(k => user.lessonNotes[k]?.trim()).length || null)}
           mobileOpen={mobileNavOpen}
           onCloseMobile={() => setMobileNavOpen(false)}
         />
@@ -344,26 +346,12 @@ export default function App() {
           ) : activeTab === 'shop' ? (
             <RewardsShopView user={user} onUpdateUser={setUser} />
           ) : activeTab === 'notes' ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '22px' }}>
-              <div className="glass-panel" style={{ padding: '26px' }}>
-                <h1 style={{ color: '#fff' }}>My Study Notes</h1>
-                <p style={{ color: 'var(--text-muted)', marginTop: '6px' }}>Notes stay linked to their lesson. Open a lesson to edit them.</p>
-              </div>
-              {Object.entries(user.lessonNotes || {}).filter(([, note]) => note?.trim()).length ? (
-                <div className="courses-responsive-grid">
-                  {Object.entries(user.lessonNotes || {}).filter(([, note]) => note?.trim()).map(([lessonId, note]) => {
-                    const course = courses.find(item => item.modules?.some(module => module.lessons?.some(lesson => lesson.id === lessonId)));
-                    const lesson = course?.modules.flatMap(module => module.lessons || []).find(item => item.id === lessonId);
-                    return <article className="glass-panel" key={lessonId} style={{ padding: '20px' }}>
-                      <div style={{ color: 'var(--accent-primary)', fontSize: '0.75rem', fontWeight: 700 }}>{course?.title || 'Course no longer available'}</div>
-                      <h2 style={{ color: '#fff', fontSize: '1.05rem', marginTop: '6px' }}>{lesson?.title || 'Saved lesson note'}</h2>
-                      <p style={{ color: 'var(--text-muted)', marginTop: '12px', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{note}</p>
-                      {course && <button className="ghost-btn" style={{ marginTop: '14px' }} onClick={() => setActiveCourse(course)}>Open lesson</button>}
-                    </article>;
-                  })}
-                </div>
-              ) : <div className="glass-panel" style={{ padding: '36px', textAlign: 'center', color: 'var(--text-muted)' }}>Your saved lesson notes will appear here.</div>}
-            </div>
+            <StudyNotesView
+              user={user}
+              onUpdateUser={setUser}
+              courses={courses}
+              onSelectCourse={(course) => setActiveCourse(course)}
+            />
           ) : null}
         </main>
 

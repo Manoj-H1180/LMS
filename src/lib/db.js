@@ -154,6 +154,8 @@ async function createTablesAndMigrate() {
     sql`ALTER TABLE courses ADD COLUMN IF NOT EXISTS owner_username TEXT`,
     sql`UPDATE courses SET owner_username = NULL WHERE owner_username = ''`,
     sql`CREATE INDEX IF NOT EXISTS courses_owner_username_idx ON courses (owner_username)`,
+    sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS important_lessons TEXT DEFAULT '[]'`,
+    sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS course_highlights TEXT DEFAULT '{}'`,
   ]);
 }
 
@@ -180,6 +182,8 @@ function formatUserRecord(row) {
     inventory: JSON.parse(row.inventory || '["theme_cyberpunk"]'),
     activeTheme: row.active_theme || 'cyberpunk',
     lessonNotes: JSON.parse(row.lesson_notes || '{}'),
+    importantLessons: JSON.parse(row.important_lessons || '[]'),
+    courseHighlights: JSON.parse(row.course_highlights || '{}'),
     soundEnabled: row.sound_enabled !== 0 && row.sound_enabled !== '0',
     createdAt: row.created_at,
     updatedAt: row.updated_at
@@ -398,6 +402,7 @@ export async function upsertUser(user) {
       streak_frozen, double_xp_until, last_active_date,
       completed_lessons, quiz_scores, unlocked_achievements,
       inventory, active_theme, lesson_notes, sound_enabled,
+      important_lessons, course_highlights,
       created_at, updated_at
     ) VALUES (
       ${username},
@@ -418,6 +423,8 @@ export async function upsertUser(user) {
       ${user.activeTheme || 'cyberpunk'},
       ${JSON.stringify(user.lessonNotes || {})},
       ${user.soundEnabled !== false ? 1 : 0},
+      ${JSON.stringify(user.importantLessons || [])},
+      ${JSON.stringify(user.courseHighlights || {})},
       ${now},
       ${now}
     )
@@ -438,6 +445,8 @@ export async function upsertUser(user) {
       inventory = EXCLUDED.inventory,
       active_theme = EXCLUDED.active_theme,
       lesson_notes = EXCLUDED.lesson_notes,
+      important_lessons = EXCLUDED.important_lessons,
+      course_highlights = EXCLUDED.course_highlights,
       sound_enabled = EXCLUDED.sound_enabled,
       updated_at = EXCLUDED.updated_at
   `;
@@ -668,12 +677,19 @@ export async function saveAuthenticatedUserUpdates(username, updates) {
     title: typeof updates.title === 'string' ? updates.title.slice(0, 60) : existing.title,
     streakFrozen: Boolean(updates.streakFrozen),
     soundEnabled: updates.soundEnabled !== false,
+    importantLessons: Array.isArray(updates.importantLessons) ? updates.importantLessons : existing.importantLessons,
+    courseHighlights: updates.courseHighlights && typeof updates.courseHighlights === 'object' ? updates.courseHighlights : existing.courseHighlights,
+    lessonNotes: updates.lessonNotes && typeof updates.lessonNotes === 'object' ? updates.lessonNotes : existing.lessonNotes
   };
   await sql`
     UPDATE users SET name = ${safeUpdates.name}, avatar = ${safeUpdates.avatar},
       inventory = ${JSON.stringify(safeUpdates.inventory)}, active_theme = ${safeUpdates.activeTheme},
       title = ${safeUpdates.title}, streak_frozen = ${safeUpdates.streakFrozen ? 1 : 0},
-      sound_enabled = ${safeUpdates.soundEnabled ? 1 : 0}, updated_at = ${Date.now()}
+      sound_enabled = ${safeUpdates.soundEnabled ? 1 : 0},
+      important_lessons = ${JSON.stringify(safeUpdates.importantLessons || [])},
+      course_highlights = ${JSON.stringify(safeUpdates.courseHighlights || {})},
+      lesson_notes = ${JSON.stringify(safeUpdates.lessonNotes || {})},
+      updated_at = ${Date.now()}
     WHERE lower(username) = ${username.toLowerCase()}
   `;
   return getUser(username);

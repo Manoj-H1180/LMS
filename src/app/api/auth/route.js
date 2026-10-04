@@ -133,6 +133,8 @@ export async function POST(request) {
         inventory: ['theme_cyberpunk'],
         activeTheme: 'cyberpunk',
         lessonNotes: {},
+        importantLessons: [],
+        courseHighlights: {},
         soundEnabled: true
       };
 
