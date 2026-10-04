@@ -15,6 +15,7 @@ import CelebrationModal from './components/Celebration/CelebrationModal';
 import CourseCard from './components/CourseCard';
 import AuthScreen, { checkServerSession, clearSession } from './components/Auth/AuthScreen';
 import MobileBottomNav from './components/MobileBottomNav';
+import ExecutionLabView from './components/ExecutionLab/ExecutionLabView';
 
 import { 
   loadUser, 
@@ -279,6 +280,7 @@ export default function App() {
                 user={user}
                 onUpdateUser={setUser}
                 onBack={() => setActiveCourse(null)}
+                onOpenVisualizer={() => { setActiveCourse(null); setActiveTab('execution_lab'); }}
                 onRegisterProgressCheckpoint={checkpoint => { progressCheckpointRef.current = checkpoint; }}
               />
             </CoursePlayerBoundary>
@@ -294,6 +296,8 @@ export default function App() {
               onRemoveAllImportedData={handleRemoveAllImportedData}
               searchQuery={searchQuery}
             />
+          ) : activeTab === 'execution_lab' ? (
+            <ExecutionLabView user={user} onUpdateUser={setUser} />
           ) : activeTab === 'my_learning' ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
               <div className="glass-panel" style={{ padding: '28px' }}>

@@ -1,0 +1,30 @@
+{
+  "expo": {
+    "name": "NexusLearn",
+    "slug": "nexuslearn-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0b0d17",
+    "splash": {
+      "backgroundColor": "#0b0d17"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.nexuslearn.mobile"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#0b0d17",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "package": "com.nexuslearn.mobile"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    }
+  }
+}

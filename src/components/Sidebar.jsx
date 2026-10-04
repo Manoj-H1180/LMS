@@ -12,7 +12,8 @@ import {
   ShoppingBag,
   Sparkles,
   Book,
-  X
+  X,
+  Cpu
 } from 'lucide-react';
 import { soundFX } from '../utils/soundEffects';
 
@@ -26,6 +27,7 @@ export default function Sidebar({
 }) {
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { id: 'execution_lab', label: 'Execution Lab', icon: Cpu, badge: 'NEW' },
     { id: 'courses', label: 'Explore Courses', icon: Compass, badge: coursesCount },
     { id: 'my_learning', label: 'My Learning', icon: GraduationCap, badge: enrolledCount > 0 ? enrolledCount : null },
     { id: 'notes', label: 'Study Notes', icon: Book },

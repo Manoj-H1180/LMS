@@ -34,12 +34,14 @@ import { triggerConfetti } from '../../utils/confettiHelper';
 import { fetchCourseProgressFromDisk, saveCourseProgressToDisk } from '../../utils/storage';
 import { saveVideoHandle, restoreVideoFromHandle } from '../../utils/videoFileHandles';
 import CertificateModal from '../Certificate/CertificateModal';
+import CodingIDE from './CodingIDE';
 
 export default function CoursePlayerView({ 
   course, 
   user, 
   onUpdateUser, 
   onBack,
+  onOpenVisualizer,
   onRegisterProgressCheckpoint
 }) {
   // Flatten all lessons for navigation
@@ -69,6 +71,7 @@ export default function CoursePlayerView({
   );
 
   const [currentLessonId, setCurrentLessonId] = useState(() => allLessons[0]?.id || '');
+  const [showCodingIDE, setShowCodingIDE] = useState(false);
   const [showCertificate, setShowCertificate] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
   const [currentNote, setCurrentNote] = useState('');
@@ -1131,6 +1134,118 @@ export default function CoursePlayerView({
               </div>
             </div>
           )}
+
+          {/* ─── Coding IDE & Concept Visualizer ───────────────── */}
+          <div style={{ marginTop: '8px' }}>
+            {onOpenVisualizer && (
+              <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'flex-end' }}>
+                <button
+                  id="open-concept-visualizer-btn"
+                  onClick={onOpenVisualizer}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    padding: '8px 14px',
+                    borderRadius: '8px',
+                    background: 'rgba(99, 102, 241, 0.15)',
+                    border: '1px solid rgba(99, 102, 241, 0.35)',
+                    color: '#c4b5fd',
+                    fontSize: '0.78rem',
+                    fontWeight: '700',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease'
+                  }}
+                  title="Open code in the step-by-step visualizer"
+                >
+                  <span>⚡ Open Concept Visualizer & Execution Lab</span>
+                </button>
+              </div>
+            )}
+            {/* Toggle Button */}
+            <button
+              id="toggle-coding-ide-btn"
+              onClick={() => setShowCodingIDE(prev => !prev)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                width: '100%',
+                padding: '14px 20px',
+                background: showCodingIDE
+                  ? 'linear-gradient(135deg, rgba(99,102,241,0.2), rgba(139,92,246,0.15))'
+                  : 'rgba(99,102,241,0.07)',
+                border: `1px solid ${showCodingIDE ? 'rgba(99,102,241,0.5)' : 'rgba(99,102,241,0.2)'}`,
+                borderRadius: showCodingIDE ? '16px 16px 0 0' : '16px',
+                color: showCodingIDE ? '#c4b5fd' : 'var(--text-muted)',
+                cursor: 'pointer',
+                transition: 'all 0.25s ease',
+                textAlign: 'left',
+                boxShadow: showCodingIDE ? '0 0 20px rgba(99,102,241,0.15)' : 'none'
+              }}
+            >
+              <div style={{
+                width: '32px',
+                height: '32px',
+                borderRadius: '8px',
+                background: 'linear-gradient(135deg, #4f46e5, #7c3aed)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+                boxShadow: '0 0 12px rgba(99,102,241,0.4)'
+              }}>
+                <span style={{ fontSize: '16px' }}>{'</>'}</span>
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: '0.92rem', fontWeight: '700', color: showCodingIDE ? '#c4b5fd' : '#fff' }}>
+                  Coding IDE
+                </div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)', marginTop: '2px' }}>
+                  {showCodingIDE
+                    ? 'JavaScript & Python • AI-powered problems • Call stack visualizer'
+                    : 'Practice code, run experiments, get AI-generated problems from this lesson'}
+                </div>
+              </div>
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                fontSize: '0.75rem',
+                color: 'var(--text-dim)',
+                flexShrink: 0
+              }}>
+                {showCodingIDE ? (
+                  <span style={{ color: '#34d399', fontWeight: '600' }}>▲ Collapse</span>
+                ) : (
+                  <span style={{ color: '#818cf8', fontWeight: '600' }}>▼ Open IDE</span>
+                )}
+              </div>
+            </button>
+
+            {/* Coding IDE Panel */}
+            {showCodingIDE && (
+              <div style={{
+                borderRadius: '0 0 16px 16px',
+                overflow: 'hidden',
+                border: '1px solid rgba(99,102,241,0.3)',
+                borderTop: 'none',
+                animation: 'ideSlideIn 0.3s ease'
+              }}>
+                <CodingIDE
+                  lesson={currentLesson}
+                  course={course}
+                />
+              </div>
+            )}
+          </div>
+
+          <style>{`
+            @keyframes ideSlideIn {
+              from { opacity: 0; transform: translateY(-12px); }
+              to { opacity: 1; transform: translateY(0); }
+            }
+          `}</style>
 
           {/* Navigation Controls between lessons */}
           <div style={{
