@@ -242,28 +242,67 @@ export async function clearAllCoursesFromDisk() {
   return removeAllImportedDataFromDisk();
 }
 
-// Fetch single course progress from SQLite on disk
+// Synchronously read cached course progress (0ms delay for instant video restore)
+export function getCachedCourseProgress(courseId) {
+  if (typeof window === 'undefined' || !courseId) return null;
+  try {
+    const raw = localStorage.getItem(`lms_progress_${courseId}`);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+// Fetch single course progress from SQLite on disk with local cache fallback
 export async function fetchCourseProgressFromDisk(courseId, username) {
   try {
     const url = `/api/progress?courseId=${encodeURIComponent(courseId)}${username ? `&username=${encodeURIComponent(username)}` : ''}`;
     const res = await fetch(url);
     const data = await res.json();
     if (data.success && data.progress) {
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem(`lms_progress_${courseId}`, JSON.stringify(data.progress));
+        } catch {}
+      }
       return data.progress;
     }
   } catch (err) {
     console.warn('Failed to fetch course progress from SQLite:', err);
   }
-  return null;
+  return getCachedCourseProgress(courseId);
 }
 
-// Save single course progress to SQLite on disk
+// Save single course progress to SQLite on disk and local cache
 export async function saveCourseProgressToDisk(progressData) {
+  if (!progressData || !progressData.courseId) return null;
+
+  // Immediately cache to localStorage synchronously for instant zero-latency restores
+  if (typeof window !== 'undefined') {
+    try {
+      const existing = getCachedCourseProgress(progressData.courseId) || {};
+      const merged = {
+        ...existing,
+        ...progressData,
+        lessonPlaybackTimes: {
+          ...(existing.lessonPlaybackTimes || {}),
+          ...(progressData.lessonPlaybackTimes || {})
+        }
+      };
+      if (progressData.lastLessonId && Number(progressData.playbackTime) > 0) {
+        merged.lessonPlaybackTimes[progressData.lastLessonId] = Number(progressData.playbackTime);
+        localStorage.setItem(`lms_video_pos_${progressData.courseId}_${progressData.lastLessonId}`, String(progressData.playbackTime));
+      }
+      localStorage.setItem(`lms_progress_${progressData.courseId}`, JSON.stringify(merged));
+    } catch {}
+  }
+
   const save = progressSaveQueue.then(async () => {
     const res = await fetch('/api/progress', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(progressData)
+      body: JSON.stringify(progressData),
+      keepalive: true
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.success) {

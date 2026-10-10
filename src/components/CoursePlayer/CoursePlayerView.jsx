@@ -36,7 +36,7 @@ import {
 } from 'lucide-react';
 import { soundFX } from '../../utils/soundEffects';
 import { triggerConfetti } from '../../utils/confettiHelper';
-import { fetchCourseProgressFromDisk, saveCourseProgressToDisk, saveUser } from '../../utils/storage';
+import { fetchCourseProgressFromDisk, saveCourseProgressToDisk, saveUser, getCachedCourseProgress } from '../../utils/storage';
 import { saveVideoHandle, restoreVideoFromHandle } from '../../utils/videoFileHandles';
 import CertificateModal from '../Certificate/CertificateModal';
 import CodingIDE from './CodingIDE';
@@ -77,7 +77,16 @@ export default function CoursePlayerView({
     }))
   );
 
-  const [currentLessonId, setCurrentLessonId] = useState(() => allLessons[0]?.id || '');
+  // Pre-load cached progress for instantaneous 0ms restore without waiting for network
+  const initialCachedProgress = getCachedCourseProgress(course?.id);
+  const lessonPlaybackTimesRef = useRef(initialCachedProgress?.lessonPlaybackTimes || {});
+
+  const [currentLessonId, setCurrentLessonId] = useState(() => {
+    if (initialCachedProgress?.lastLessonId && allLessons.some(l => l.id === initialCachedProgress.lastLessonId)) {
+      return initialCachedProgress.lastLessonId;
+    }
+    return allLessons[0]?.id || '';
+  });
   const [showCodingIDE, setShowCodingIDE] = useState(false);
   const [showCertificate, setShowCertificate] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
@@ -98,13 +107,49 @@ export default function CoursePlayerView({
   const [quizScore, setQuizScore] = useState(0);
   const [restoreProgress, setRestoreProgress] = useState(null);
 
+  const getSavedPlaybackTimeForLesson = (lessonId) => {
+    if (!lessonId) return 0;
+    if (Number(lessonPlaybackTimesRef.current?.[lessonId]) > 0) {
+      return Number(lessonPlaybackTimesRef.current[lessonId]);
+    }
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem(`lms_video_pos_${course?.id}_${lessonId}`);
+        if (stored && Number(stored) > 0) return Number(stored);
+      } catch {}
+    }
+    return 0;
+  };
+
   const videoRef = useRef(null);
   const localVideoFileInputRef = useRef(null);
   const savedPlaybackTimeRef = useRef(0);
+  const pendingSeekTimeRef = useRef(() => {
+    const startId = (initialCachedProgress?.lastLessonId && allLessons.some(l => l.id === initialCachedProgress.lastLessonId))
+      ? initialCachedProgress.lastLessonId
+      : (allLessons[0]?.id || '');
+    return getSavedPlaybackTimeForLesson(startId);
+  });
+  if (typeof pendingSeekTimeRef.current === 'function') {
+    pendingSeekTimeRef.current = pendingSeekTimeRef.current();
+  }
   const hydratedProgressCourseRef = useRef(null);
   const notesTimerRef = useRef(null);
   const playerShellRef = useRef(null);
   const currentVideoCheckpointRef = useRef(null);
+
+  const attemptSeek = (video = videoRef.current) => {
+    if (!video) return;
+    const target = pendingSeekTimeRef.current;
+    if (target > 0 && Number.isFinite(video.duration) && target < video.duration - 1) {
+      try {
+        video.currentTime = target;
+        pendingSeekTimeRef.current = 0;
+      } catch (err) {
+        console.warn('Playback seek pending:', err);
+      }
+    }
+  };
   // Cleanup blob URLs when component unmounts to free memory
   const localBlobUrlsRef = useRef(localBlobUrls);
   localBlobUrlsRef.current = localBlobUrls;
@@ -356,14 +401,23 @@ export default function CoursePlayerView({
     fetchCourseProgressFromDisk(course.id, user.username).then(progress => {
       if (hydratedProgressCourseRef.current !== course.id || !progress) return;
       if (progress) {
+        if (progress.lessonPlaybackTimes && typeof progress.lessonPlaybackTimes === 'object') {
+          lessonPlaybackTimesRef.current = {
+            ...lessonPlaybackTimesRef.current,
+            ...progress.lessonPlaybackTimes
+          };
+        }
         if (progress.lastLessonId && allLessons.some(l => l.id === progress.lastLessonId)) {
           setCurrentLessonId(progress.lastLessonId);
         }
         setRestoreProgress(progress);
-        if (progress.playbackTime > 0) {
-          savedPlaybackTimeRef.current = progress.playbackTime;
-          if (videoRef.current) {
-            videoRef.current.currentTime = progress.playbackTime;
+        const targetLessonId = progress.lastLessonId || currentLessonId;
+        const savedTime = progress.lessonPlaybackTimes?.[targetLessonId] || (progress.lastLessonId === targetLessonId ? progress.playbackTime : 0);
+        if (savedTime > 0) {
+          pendingSeekTimeRef.current = savedTime;
+          savedPlaybackTimeRef.current = savedTime;
+          if (videoRef.current && videoRef.current.readyState >= 1) {
+            attemptSeek(videoRef.current);
           }
         }
         if (Array.isArray(progress.completedLessons) && progress.completedLessons.length > 0) {
@@ -384,7 +438,7 @@ export default function CoursePlayerView({
         }
       }
     });
-  }, [course?.id, user.username, allLessons, onUpdateUser, user]);
+  }, [course?.id, user.username, allLessons, onUpdateUser, user, currentLessonId]);
 
   // Load lesson note when lesson changes
   useEffect(() => {
@@ -398,16 +452,55 @@ export default function CoursePlayerView({
   useEffect(() => {
     if (videoRef.current) {
       videoRef.current.playbackRate = playbackSpeed;
-      if (restoreProgress?.lastLessonId === currentLessonId && restoreProgress.playbackTime > 0) {
-        videoRef.current.currentTime = restoreProgress.playbackTime;
-        setRestoreProgress(null);
-        savedPlaybackTimeRef.current = restoreProgress.playbackTime;
-      } else if (savedPlaybackTimeRef.current > 0) {
-        videoRef.current.currentTime = savedPlaybackTimeRef.current;
-        savedPlaybackTimeRef.current = 0;
+    }
+    const savedTime = getSavedPlaybackTimeForLesson(currentLessonId);
+    if (savedTime > 0) {
+      pendingSeekTimeRef.current = savedTime;
+      savedPlaybackTimeRef.current = savedTime;
+      if (videoRef.current && videoRef.current.readyState >= 1) {
+        attemptSeek(videoRef.current);
       }
     }
-  }, [playbackSpeed, currentLessonId, restoreProgress]);
+  }, [playbackSpeed, currentLessonId]);
+
+  // Save video progress on tab leave / browser close / refresh
+  useEffect(() => {
+    const persistVideoTime = () => {
+      const video = videoRef.current;
+      if (video && currentLesson?.id) {
+        const sec = Math.floor(video.currentTime || 0);
+        if (sec > 0) {
+          lessonPlaybackTimesRef.current[currentLesson.id] = sec;
+          if (typeof window !== 'undefined') {
+            try {
+              localStorage.setItem(`lms_video_pos_${course.id}_${currentLesson.id}`, String(sec));
+            } catch {}
+          }
+          saveCourseProgressToDisk({
+            courseId: course.id,
+            username: user.username,
+            lastLessonId: currentLesson.id,
+            playbackTime: sec,
+            lessonPlaybackTimes: lessonPlaybackTimesRef.current,
+            completedLessons: user.completedLessons || [],
+            lessonCompletedAt: user.lessonCompletedAt || {},
+            quizScores: user.quizScores || {},
+            notes: user.lessonNotes || {},
+            progressPercent,
+            completed: isCourseFullyCompleted
+          });
+        }
+      }
+    };
+
+    window.addEventListener('pagehide', persistVideoTime);
+    window.addEventListener('beforeunload', persistVideoTime);
+    return () => {
+      window.removeEventListener('pagehide', persistVideoTime);
+      window.removeEventListener('beforeunload', persistVideoTime);
+      persistVideoTime();
+    };
+  }, [course.id, currentLesson, user, progressPercent, isCourseFullyCompleted]);
 
   // Toggle Module in Sidebar
   const toggleModule = (idx) => {
@@ -415,15 +508,31 @@ export default function CoursePlayerView({
     setExpandedModules(prev => ({ ...prev, [idx]: !prev[idx] }));
   };
 
-  // Switch Lesson & save position to SQLite
+  // Switch Lesson & save current video position + new lesson to SQLite
   const selectLesson = (lessonId) => {
     soundFX.playClick();
+    const currentPlaybackTime = videoRef.current ? Math.floor(videoRef.current.currentTime || 0) : 0;
+    if (currentLesson?.id) {
+      lessonPlaybackTimesRef.current[currentLesson.id] = currentPlaybackTime;
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem(`lms_video_pos_${course.id}_${currentLesson.id}`, String(currentPlaybackTime));
+        } catch {}
+      }
+    }
+
+    const nextSavedTime = getSavedPlaybackTimeForLesson(lessonId);
+    pendingSeekTimeRef.current = nextSavedTime;
+    savedPlaybackTimeRef.current = nextSavedTime;
+
     setCurrentLessonId(lessonId);
     setMobileTab('lesson'); // auto switch to lesson viewer on mobile devices
     saveCourseProgressToDisk({
       courseId: course.id,
       username: user.username,
       lastLessonId: lessonId,
+      playbackTime: nextSavedTime,
+      lessonPlaybackTimes: lessonPlaybackTimesRef.current,
       completedLessons: user.completedLessons || [],
       lessonCompletedAt: user.lessonCompletedAt || {},
       quizScores: user.quizScores || {},
@@ -431,6 +540,33 @@ export default function CoursePlayerView({
       progressPercent,
       completed: isCourseFullyCompleted
     });
+  };
+
+  const handleBackToDashboard = () => {
+    const video = videoRef.current;
+    if (video && currentLesson?.id) {
+      const sec = Math.floor(video.currentTime || 0);
+      lessonPlaybackTimesRef.current[currentLesson.id] = sec;
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem(`lms_video_pos_${course.id}_${currentLesson.id}`, String(sec));
+        } catch {}
+      }
+      saveCourseProgressToDisk({
+        courseId: course.id,
+        username: user.username,
+        lastLessonId: currentLesson.id,
+        playbackTime: sec,
+        lessonPlaybackTimes: lessonPlaybackTimesRef.current,
+        completedLessons: user.completedLessons || [],
+        lessonCompletedAt: user.lessonCompletedAt || {},
+        quizScores: user.quizScores || {},
+        notes: user.lessonNotes || {},
+        progressPercent,
+        completed: isCourseFullyCompleted
+      });
+    }
+    onBack?.();
   };
 
   // Mark Lesson Completed & persist to SQLite on disk
@@ -599,7 +735,7 @@ export default function CoursePlayerView({
       <div className="course-player-topbar">
         <div className="course-player-topbar-left">
           <button 
-            onClick={onBack}
+            onClick={handleBackToDashboard}
             className="ghost-btn course-player-back-btn"
           >
             <ArrowLeft size={16} />
@@ -1046,8 +1182,13 @@ export default function CoursePlayerView({
                       playsInline
                       aria-label={currentLesson.title}
                       onLoadedMetadata={event => {
-                        const { duration, currentTime } = event.currentTarget;
-                        setVideoState(state => ({ ...state, duration, currentTime, error: '' }));
+                        const video = event.currentTarget;
+                        const { duration } = video;
+                        attemptSeek(video);
+                        setVideoState(state => ({ ...state, duration, currentTime: video.currentTime, error: '' }));
+                      }}
+                      onCanPlay={event => {
+                        attemptSeek(event.currentTarget);
                       }}
                       onDurationChange={event => {
                         const { duration } = event.currentTarget;
@@ -1057,10 +1198,19 @@ export default function CoursePlayerView({
                         const video = event.currentTarget;
                         const sec = Math.floor(video.currentTime);
                         setVideoState(state => ({ ...state, currentTime: video.currentTime, buffered: video.buffered.length ? video.buffered.end(video.buffered.length - 1) : 0 }));
+                        if (currentLesson?.id) {
+                          lessonPlaybackTimesRef.current[currentLesson.id] = sec;
+                          if (typeof window !== 'undefined') {
+                            try {
+                              localStorage.setItem(`lms_video_pos_${course.id}_${currentLesson.id}`, String(sec));
+                            } catch {}
+                          }
+                        }
                         currentVideoCheckpointRef.current = {
                           courseId: course.id,
                           lastLessonId: currentLesson.id,
                           playbackTime: sec,
+                          lessonPlaybackTimes: lessonPlaybackTimesRef.current,
                           completedLessons: user.completedLessons || [],
                           lessonCompletedAt: user.lessonCompletedAt || {},
                           quizScores: user.quizScores || {},
@@ -1068,7 +1218,7 @@ export default function CoursePlayerView({
                           progressPercent,
                           completed: isCourseFullyCompleted
                         };
-                        if (sec > 0 && sec % 10 === 0 && savedPlaybackTimeRef.current !== sec) {
+                        if (sec > 0 && sec % 5 === 0 && savedPlaybackTimeRef.current !== sec) {
                           savedPlaybackTimeRef.current = sec;
                           saveCourseProgressToDisk(currentVideoCheckpointRef.current);
                         }
@@ -1076,11 +1226,21 @@ export default function CoursePlayerView({
                       onPlay={() => setVideoState(state => ({ ...state, paused: false, error: '' }))}
                       onPause={event => {
                         const video = event.currentTarget;
+                        const sec = Math.floor(video.currentTime);
                         setVideoState(state => ({ ...state, paused: true, currentTime: video.currentTime }));
+                        if (currentLesson?.id) {
+                          lessonPlaybackTimesRef.current[currentLesson.id] = sec;
+                          if (typeof window !== 'undefined') {
+                            try {
+                              localStorage.setItem(`lms_video_pos_${course.id}_${currentLesson.id}`, String(sec));
+                            } catch {}
+                          }
+                        }
                         const checkpoint = {
                           courseId: course.id,
                           lastLessonId: currentLesson.id,
-                          playbackTime: Math.floor(video.currentTime),
+                          playbackTime: sec,
+                          lessonPlaybackTimes: lessonPlaybackTimesRef.current,
                           completedLessons: user.completedLessons || [],
                           lessonCompletedAt: user.lessonCompletedAt || {},
                           quizScores: user.quizScores || {},
@@ -1094,6 +1254,17 @@ export default function CoursePlayerView({
                       onVolumeChange={event => {
                         const { volume, muted } = event.currentTarget;
                         setVideoState(state => ({ ...state, volume, muted }));
+                      }}
+                      onEnded={() => {
+                        if (currentLesson?.id) {
+                          lessonPlaybackTimesRef.current[currentLesson.id] = 0;
+                          if (typeof window !== 'undefined') {
+                            try {
+                              localStorage.removeItem(`lms_video_pos_${course.id}_${currentLesson.id}`);
+                            } catch {}
+                          }
+                        }
+                        handleCompleteLesson();
                       }}
                       onError={event => {
                         // If this is a local import course and the src was a (now-dead) blob URL,

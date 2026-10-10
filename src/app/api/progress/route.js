@@ -35,6 +35,7 @@ export async function GET(request) {
           username,
           lastLessonId: null,
           playbackTime: 0,
+          lessonPlaybackTimes: {},
           completedLessons: [],
           quizScores: {},
           notes: {},
@@ -56,7 +57,7 @@ export async function POST(request) {
   try {
     await ensureTables();
     const body = await request.json();
-    const { courseId, lastLessonId, playbackTime, completedLessons, quizScores, notes, lessonCompletedAt, progressPercent, completed } = body;
+    const { courseId, lastLessonId, playbackTime, lessonPlaybackTimes, completedLessons, quizScores, notes, lessonCompletedAt, progressPercent, completed } = body;
 
     if (!courseId) {
       return NextResponse.json({ success: false, error: 'courseId is required' }, { status: 400 });
@@ -70,6 +71,7 @@ export async function POST(request) {
       courseId,
       lastLessonId,
       playbackTime,
+      lessonPlaybackTimes,
       completedLessons,
       quizScores,
       notes,

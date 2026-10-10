@@ -151,6 +151,7 @@ async function createTablesAndMigrate() {
   `,
 
     sql`ALTER TABLE course_progress ADD COLUMN IF NOT EXISTS lesson_completed_at TEXT DEFAULT '{}'`,
+    sql`ALTER TABLE course_progress ADD COLUMN IF NOT EXISTS lesson_playback_times TEXT DEFAULT '{}'`,
     sql`ALTER TABLE courses ADD COLUMN IF NOT EXISTS owner_username TEXT`,
     sql`UPDATE courses SET owner_username = NULL WHERE owner_username = ''`,
     sql`CREATE INDEX IF NOT EXISTS courses_owner_username_idx ON courses (owner_username)`,
@@ -223,6 +224,7 @@ function formatProgressRecord(row) {
     courseId: row.course_id,
     lastLessonId: row.last_lesson_id || null,
     playbackTime: Number(row.playback_time || 0),
+    lessonPlaybackTimes: JSON.parse(row.lesson_playback_times || '{}'),
     completedLessons: JSON.parse(row.completed_lessons || '[]'),
     lessonCompletedAt: JSON.parse(row.lesson_completed_at || '{}'),
     quizScores: JSON.parse(row.quiz_scores || '{}'),
@@ -580,6 +582,7 @@ export async function saveCourseProgress({
   courseId,
   lastLessonId,
   playbackTime = 0,
+  lessonPlaybackTimes = {},
   completedLessons = [],
   quizScores = {},
   notes = {},
@@ -598,6 +601,11 @@ export async function saveCourseProgress({
   const mergedScores = { ...(previous?.quizScores || {}), ...(quizScores || {}) };
   const mergedNotes = { ...(previous?.notes || {}), ...(notes || {}) };
   const mergedTimestamps = { ...(previous?.lessonCompletedAt || {}), ...(lessonCompletedAt || {}) };
+  const mergedPlaybackTimes = { ...(previous?.lessonPlaybackTimes || {}), ...(lessonPlaybackTimes || {}) };
+  if (lastLessonId && Number(playbackTime) > 0) {
+    mergedPlaybackTimes[lastLessonId] = Number(playbackTime);
+  }
+
   const course = await getCourseById(courseId);
   const allLessons = (course?.modules || []).flatMap(module => module.lessons || []);
   const lessonMap = new Map(allLessons.map(lesson => [lesson.id, lesson]));
@@ -607,11 +615,12 @@ export async function saveCourseProgress({
 
   await sql`
     INSERT INTO course_progress (
-      id, username, course_id, last_lesson_id, playback_time,
+      id, username, course_id, last_lesson_id, playback_time, lesson_playback_times,
       completed_lessons, quiz_scores, notes, progress_percent, completed, updated_at, lesson_completed_at
     ) VALUES (
       ${id}, ${cleanUsername}, ${courseId}, ${lastLessonId || null},
       ${Number(playbackTime || 0)},
+      ${JSON.stringify(mergedPlaybackTimes)},
       ${JSON.stringify(mergedCompleted)},
       ${JSON.stringify(mergedScores)},
       ${JSON.stringify(mergedNotes)},
@@ -623,6 +632,7 @@ export async function saveCourseProgress({
     ON CONFLICT (id) DO UPDATE SET
       last_lesson_id = COALESCE(EXCLUDED.last_lesson_id, course_progress.last_lesson_id),
       playback_time = CASE WHEN EXCLUDED.playback_time > 0 THEN EXCLUDED.playback_time ELSE course_progress.playback_time END,
+      lesson_playback_times = (COALESCE(NULLIF(course_progress.lesson_playback_times, ''), '{}')::jsonb || COALESCE(NULLIF(EXCLUDED.lesson_playback_times, ''), '{}')::jsonb)::text,
       completed_lessons = (
         SELECT COALESCE(jsonb_agg(DISTINCT val), '[]'::jsonb)::text
         FROM jsonb_array_elements_text(
